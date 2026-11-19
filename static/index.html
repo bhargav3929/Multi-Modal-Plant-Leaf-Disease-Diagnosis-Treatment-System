@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plant Pathology Console</title>
+  <meta name="description" content="Agentic multi-modal plant pathology and treatment system powered by LangGraph.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2314532D'/%3E%3Cpath d='M9 23c0-9 6-14 15-14 0 9-5 15-14 15' fill='%2334d399'/%3E%3Cpath d='M9 23l9-9' stroke='%2314532D' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css?v=1795003950">
+</head>
+<body>
+
+<header class="topbar no-print">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#14532D"/><path d="M9 23c0-9 6-14 15-14 0 9-5 15-14 15" fill="#34d399"/><path d="M9 23l9-9" stroke="#14532D" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <div class="brand-text">
+      <h1>Plant Pathology Console</h1>
+      <span>Agentic multi-modal diagnosis · LangGraph</span>
+    </div>
+  </div>
+
+  <nav class="modes" role="tablist" aria-label="Mode">
+    <button class="mode active" role="tab" data-mode="diagnose" aria-selected="true">Diagnose</button>
+    <button class="mode" role="tab" data-mode="compare" aria-selected="false">Compare Progress</button>
+  </nav>
+
+  <div class="top-actions">
+    <div id="quotaPill" class="quota" title="Free demo scans in your rolling hour">
+      <span class="dot"></span>
+      <span id="quotaText" class="mono">–/– Free Demo Scans Left This Hour</span>
+      <span id="quotaReset" class="mono quota-reset"></span>
+    </div>
+    <button class="btn ghost" id="btnHistory" type="button">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
+      <span>History</span>
+    </button>
+    <button class="btn ghost" id="btnKeys" type="button">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3m-4 4 3 3m-6-1 2 2"/></svg>
+      <span>API Keys</span><i id="keyDot" class="status-dot" title="AI provider status"></i>
+    </button>
+  </div>
+</header>
+
+<main class="no-print">
+  <!-- ============================ DIAGNOSE ============================ -->
+  <section id="viewDiagnose" class="view layout">
+    <div class="bench">
+      <div class="card">
+        <div class="card-head"><h2>Specimen Bench</h2><span class="tag">Step 1</span></div>
+        <div id="uploadSingle"></div>
+
+        <div class="field-row">
+          <label class="field"><span>Crop name <em>(optional)</em></span>
+            <input id="cropInput" type="text" maxlength="60" placeholder="e.g. Tomato"></label>
+          <label class="field"><span>City <em>(live weather risk)</em></span>
+            <input id="cityInput" type="text" maxlength="80" placeholder="e.g. Hyderabad"></label>
+        </div>
+
+        <div class="samples">
+          <span class="label">1-click samples</span>
+          <div id="sampleBar" class="chips"></div>
+        </div>
+
+        <button id="btnAnalyze" class="btn primary block" type="button" disabled>Run Diagnosis Pipeline</button>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>LangGraph Execution</h2><span class="tag mono" id="pipeTotal">idle</span></div>
+        <div id="runBanner" class="run-banner" role="timer" aria-live="off">
+          <span class="state" id="runState">Ready - pipeline idle</span>
+          <span class="timer" id="runTimer">0.0s</span>
+        </div>
+        <ol id="pipeline" class="pipeline"></ol>
+        <details class="debug" id="debugPanel">
+          <summary>Execution &amp; Debug Logs</summary>
+          <div class="debug-body" id="debugBody"><span class="muted">Run a diagnosis to see per-node timings, models and the raw status trace.</span></div>
+        </details>
+      </div>
+    </div>
+
+    <div class="sheet" id="resultPane" aria-live="polite"></div>
+  </section>
+
+  <!-- ============================ COMPARE ============================ -->
+  <section id="viewCompare" class="view" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Progression Comparison</h2><span class="tag">v1.1</span></div>
+      <p class="muted">Upload the same plant twice - a Day 1 baseline and a follow-up after treatment - to see whether the infection is improving or worsening.</p>
+      <div class="compare-grid">
+        <div><h3 class="zone-title">Day 1 Baseline</h3><div id="uploadBase"></div></div>
+        <div><h3 class="zone-title">Follow-Up Scan</h3><div id="uploadFollow"></div></div>
+      </div>
+      <div class="field-row">
+        <label class="field"><span>Crop name <em>(optional)</em></span>
+          <input id="cmpCrop" type="text" maxlength="60" placeholder="e.g. Tomato"></label>
+        <div class="field"><span>Demo pairs</span>
+          <div class="chips">
+            <button class="chip" type="button" data-pair="improving">Early Blight → Healthy</button>
+            <button class="chip" type="button" data-pair="worsening">Healthy → Powdery Mildew</button>
+          </div>
+        </div>
+      </div>
+      <button id="btnCompare" class="btn primary" type="button" disabled>Compare Scans</button>
+    </div>
+    <div id="compareResult"></div>
+  </section>
+</main>
+
+<footer class="disclaimer no-print" role="note">
+  <strong>Agricultural &amp; chemical safety notice.</strong>
+  AI diagnoses are decision-support only and may be wrong - confirm with a qualified agronomist or your local extension service before acting.
+  Always read and follow pesticide labels, wear the specified protective equipment, observe pre-harvest intervals and comply with local regulations. Keep chemicals away from children, pets, water sources and food.
+</footer>
+
+<!-- History drawer -->
+<aside id="historyDrawer" class="drawer wide no-print" aria-hidden="true" aria-label="Scan history">
+  <div class="drawer-head">
+    <div><h2>Scan History</h2><span class="muted small">Stored locally in SQLite</span></div>
+    <button class="icon-btn" data-close="historyDrawer" aria-label="Close">✕</button>
+  </div>
+  <div class="history-tools">
+    <input id="historySearch" type="search" placeholder="Search disease, crop, city…">
+    <div id="historyFilters" class="chips"></div>
+  </div>
+  <div id="historyList" class="history-list"></div>
+</aside>
+<div id="scrim" class="scrim no-print" hidden></div>
+
+<!-- API keys modal -->
+<div id="keysModal" class="modal no-print" hidden role="dialog" aria-modal="true" aria-labelledby="keysTitle">
+  <div class="modal-card">
+    <div class="drawer-head"><h2 id="keysTitle">AI Provider Keys</h2><button class="icon-btn" data-close="keysModal" aria-label="Close">✕</button></div>
+    <p class="muted">Paste your own free key - no code editing needed. Keys are stored only in this machine's local database and are never sent anywhere except the provider itself.</p>
+    <div class="key-row">
+      <label class="field"><span>Gemini API key <em>(primary · Gemini Flash)</em></span>
+        <input id="geminiKey" type="password" autocomplete="off" placeholder="AIza…"></label>
+      <div class="key-meta"><span id="geminiState" class="badge neutral">not set</span>
+        <button class="link-btn" type="button" data-clear="gemini">Remove</button>
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get free key ↗</a></div>
+    </div>
+    <div class="key-row">
+      <label class="field"><span>Groq API key <em>(fallback · Qwen vision)</em></span>
+        <input id="groqKey" type="password" autocomplete="off" placeholder="gsk_…"></label>
+      <div class="key-meta"><span id="groqState" class="badge neutral">not set</span>
+        <button class="link-btn" type="button" data-clear="groq">Remove</button>
+        <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Get free key ↗</a></div>
+    </div>
+    <p id="keysNote" class="muted small"></p>
+    <div class="modal-actions"><button class="btn ghost" data-close="keysModal" type="button">Cancel</button><button id="btnSaveKeys" class="btn primary" type="button">Save keys</button></div>
+  </div>
+</div>
+
+<!-- Printable report modal -->
+<div id="reportModal" class="modal report-modal" hidden role="dialog" aria-modal="true" aria-label="Diagnostic report">
+  <div class="report-wrap">
+    <div class="report-toolbar no-print">
+      <strong>Diagnostic Report Preview</strong>
+      <div><button id="btnDoPrint" class="btn primary" type="button">Print / Save PDF</button>
+      <button class="btn ghost" data-close="reportModal" type="button">Close</button></div>
+    </div>
+    <article id="reportBody" class="report"></article>
+  </div>
+</div>
+
+<div id="toasts" class="toasts no-print" aria-live="assertive"></div>
+
+<script src="/static/js/app.js?v=1795003950"></script>
+</body>
+</html>

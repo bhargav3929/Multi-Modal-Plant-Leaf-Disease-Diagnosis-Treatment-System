@@ -1,0 +1,6 @@
+Sample photographs from Wikimedia Commons (https://commons.wikimedia.org):
+
+- healthy_leaf.jpg: File:Healthy tomato leaves (7871755330).jpg (CC BY 2.0)
+- early_blight_leaf.jpg: File:Early blight on tomato leaves (7871930010).jpg (CC BY 2.0)
+- powdery_mildew_leaf.jpg: File:Powdery mildew 9.jpg (CC BY-SA 4.0)
+- non_leaf_control.jpg: File:Mug of Coffee on a Wooden Table (26804116318).jpg (CC0)
