@@ -1,40 +1,59 @@
-"""LLM access via Groq only (vision model with fast fallback; text model for synthesis).
+"""LLM access via Groq only (vision model + text model, each with a fallback model).
 
-Keys come from the browser-saved settings table first, then from environment / .env.
-All calls go through LangChain chat models so LangGraph nodes stay provider-agnostic.
+Key order: key saved in the app (download version only), then GROQ_API_KEY from env / .env.
+Every call has a timeout, retries with backoff on busy/transient errors, falls back to the
+second model, and turns failures into plain-English LLMError(code=...) messages.
 """
 import json
+import logging
+import os
+import random
 import re
-import threading
 import time
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 from . import config, db
-import os
 
+log = logging.getLogger("agri")
 T = TypeVar("T", bound=BaseModel)
+
+MESSAGES = {
+    "AI_NOT_CONFIGURED": "No Groq key is set yet. Open API Keys and paste a free key from console.groq.com/keys.",
+    "AI_KEY_INVALID": "Your Groq key was rejected. Open API Keys and paste a fresh key from console.groq.com/keys.",
+    "AI_BUSY": "The AI service is busy right now. Wait a minute and try again.",
+    "AI_FAILED": "The AI couldn't process this input.",
+}
 
 
 class LLMError(RuntimeError):
-    """Raised when no provider is configured or every provider failed."""
+    """Plain-English AI failure carrying a contract error code."""
+
+    def __init__(self, code: str, message: Optional[str] = None):
+        super().__init__(message or MESSAGES[code])
+        self.code = code
 
 
 # --- key management --------------------------------------------------------------
-def get_key(provider: str) -> Tuple[str, str]:
-    """Return (key, source) where source is 'ui', 'env' or ''."""
-    ui = db.get_setting(f"{provider}_api_key")
-    if ui:
-        return ui, "ui"
+def usable_key(key: Optional[str]) -> bool:
+    key = (key or "").strip()
+    return bool(key) and key != config.KEY_PLACEHOLDER and " " not in key and key.startswith("gsk_")
+
+
+def get_key(provider: str = "groq") -> Tuple[str, str]:
+    """Return (key, source): source is 'ui', 'env' or ''. Saved keys are ignored in demo mode."""
+    if not config.DEMO_MODE:
+        ui = (db.get_setting(f"{provider}_api_key") or "").strip()
+        if usable_key(ui):
+            return ui, "ui"
     env = os.getenv(config.ENV_KEY_NAMES[provider], "").strip()
-    return (env, "env") if env else ("", "")
+    return (env, "env") if usable_key(env) else ("", "")
 
 
 def mask(key: str) -> str:
-    return "" if not key else (key[:4] + "..." + key[-4:] if len(key) > 10 else "****")
+    return "" if not key else (f"gsk_…{key[-4:]}" if len(key) > 8 else "****")
 
 
 def configured_providers() -> List[str]:
@@ -42,35 +61,24 @@ def configured_providers() -> List[str]:
 
 
 def _redact(text: str) -> str:
-    """Never let an API key leak into an error message shown to the browser."""
-    for p in config.PROVIDERS:
-        key = get_key(p)[0]
-        if key:
-            text = text.replace(key, "***")
-    return text[:240]
+    """Never let an API key leak into logs or messages."""
+    key = get_key("groq")[0]
+    if key:
+        text = text.replace(key, "***")
+    return re.sub(r"gsk_[A-Za-z0-9]{8,}", "gsk_***", text)[:240]
+
+
+def _models(vision: bool) -> List[str]:
+    primary, fallback = ((config.GROQ_VISION_MODEL, config.GROQ_VISION_FALLBACK_MODEL) if vision
+                         else (config.GROQ_MODEL, config.GROQ_FALLBACK_MODEL))
+    return [primary] + ([fallback] if fallback and fallback != primary else [])
 
 
 # --- model construction -------------------------------------------------------------
-def _build(provider: str, model: str, key: str, temperature: float, timeout: float,
-           max_tokens: Optional[int], no_thinking: bool):
+def _build(model: str, key: str, temperature: float, timeout: float, max_tokens: Optional[int]):
     from langchain_groq import ChatGroq
     extra = {"max_tokens": max_tokens} if max_tokens else {}
     return ChatGroq(model=model, api_key=key, temperature=temperature, timeout=timeout, max_retries=0, **extra)
-
-
-def _candidates(vision: bool) -> List[Tuple[str, str, str]]:
-    """Ordered (provider, model, key) attempts."""
-    out: List[Tuple[str, str, str]] = []
-    groq = get_key("groq")[0]
-    if groq:
-        if vision:
-            models = [config.GROQ_VISION_MODEL]
-            if config.GROQ_VISION_MODEL_FALLBACK and config.GROQ_VISION_MODEL_FALLBACK != config.GROQ_VISION_MODEL:
-                models.append(config.GROQ_VISION_MODEL_FALLBACK)
-        else:
-            models = [config.GROQ_TEXT_MODEL]
-        out += [("groq", m, groq) for m in models]
-    return out
 
 
 def _content_to_text(content: Any) -> str:
@@ -105,27 +113,17 @@ def _image_message(text: str, images: List[str]) -> HumanMessage:
     return HumanMessage(content=content)
 
 
-# --- provider health (circuit breaker) --------------------------------------------
-_cooldown: Dict[str, float] = {}   # provider -> monotonic time until which it is skipped
-_cooldown_lock = threading.Lock()
-COOLDOWN_SECONDS = 120.0
+# --- retry / classification ---------------------------------------------------------
+def _status_of(exc: Exception) -> Optional[int]:
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int):
+        return code
+    m = re.search(r"\b(401|413|429|400|500|502|503|504)\b", str(exc))
+    return int(m.group(1)) if m else None
 
 
-def _trip(provider: str) -> None:
-    with _cooldown_lock:
-        _cooldown[provider] = time.monotonic() + COOLDOWN_SECONDS
-
-
-def _healthy(provider: str) -> bool:
-    with _cooldown_lock:
-        return _cooldown.get(provider, 0.0) <= time.monotonic()
-
-
-# --- public API -------------------------------------------------------------------
 def _retry_after(msg: str) -> Optional[float]:
     """Seconds suggested by a 429 ('Please try again in 6.5s' / '850ms'), else None."""
-    if "429" not in msg and "rate limit" not in msg.lower():
-        return None
     m = re.search(r"try again in\s+(?:(\d+)m)?\s*([\d.]+)(ms|s)", msg)
     if not m:
         return None
@@ -133,78 +131,55 @@ def _retry_after(msg: str) -> Optional[float]:
     return secs + (int(m.group(1)) * 60 if m.group(1) else 0)
 
 
-def _attempt(provider: str, model: str, key: str, system: str, user_text: str, schema: Type[T],
-             images: Optional[List[str]], temperature: float, timeout: float, max_tokens: Optional[int]) -> Tuple[T, str]:
-    """One provider/model attempt (raises on any failure)."""
-    no_thinking = False
-    for attempt in range(2):
-        try:
-            llm = _build(provider, model, key, temperature, timeout, max_tokens, no_thinking)
-            if images:
-                # Vision models are picky about system prompts + images, so fold everything into one human turn.
-                messages = [_image_message(f"{system}\n\n{user_text}", images)]
-            else:
-                messages = [SystemMessage(content=system), HumanMessage(content=user_text)]
-            reply = llm.invoke(messages)
-            return schema.model_validate(extract_json(_content_to_text(reply.content))), f"{provider}/{model}"
-        except Exception as exc:
-            if attempt == 0 and no_thinking and "think" in str(exc).lower():
-                no_thinking = False  # this model rejects thinking_budget=0 - retry once without it
-                continue
-            wait_s = _retry_after(str(exc))
-            if attempt == 0 and wait_s is not None and wait_s <= 20:
-                time.sleep(wait_s + 0.3)   # free-tier per-minute limit: a short pause is cheaper than failing
-                continue
-            raise
-    raise RuntimeError("unreachable")
+def _attempt(model: str, key: str, system: str, user_text: str, schema: Type[T],
+             images: Optional[List[str]], temperature: float, timeout: float, max_tokens: Optional[int]) -> T:
+    llm = _build(model, key, temperature, timeout, max_tokens)
+    if images:
+        # Vision models are picky about system prompts + images, so fold everything into one human turn.
+        messages = [_image_message(f"{system}\n\n{user_text}", images)]
+    else:
+        messages = [SystemMessage(content=system), HumanMessage(content=user_text)]
+    reply = llm.invoke(messages)
+    return schema.model_validate(extract_json(_content_to_text(reply.content)))
 
 
 def invoke_json(system: str, user_text: str, schema: Type[T], images: Optional[List[str]] = None,
                 temperature: float = 0.2, timeout: Optional[float] = None,
-                max_tokens: Optional[int] = None, hedge_after: float = 4.0) -> Tuple[T, str]:
-    """Run a prompt (optionally with images); return (validated_model, 'provider/model').
+                max_tokens: Optional[int] = None) -> Tuple[T, str]:
+    """Run a prompt (optionally with images); return (validated_model, 'groq/<model>').
 
-    Providers are tried in priority order, but a slow primary does not block the fallback: if it has not
-    answered after `hedge_after` seconds (or fails) the next candidate starts in parallel and the first
-    valid answer wins. A provider that just failed is skipped for COOLDOWN_SECONDS.
+    Up to 3 attempts per model (backoff 1 s, 2 s, 4 s + jitter; a 429 'try again in Xs' with X<=20 waits X),
+    then the fallback model. 401 stops at once. Invalid JSON output is retried once.
     """
-    cands = _candidates(vision=bool(images))
-    if not cands:
-        raise LLMError("No AI provider key is configured. Click 'API Keys' and paste a free Groq key.")
+    key = get_key("groq")[0]
+    if not key:
+        raise LLMError("AI_NOT_CONFIGURED")
     timeout = timeout or config.LLM_TIMEOUT_SECONDS
-    live = [c for c in cands if _healthy(c[0])] or cands   # if everything is cooling down, try anyway
-    skipped = [c for c in cands if c not in live]
-    errors: List[str] = [f"{p}/{m}: skipped (recent failure)" for p, m, _ in skipped]
-
-    pool = ThreadPoolExecutor(max_workers=len(live))
-    pending: Dict[Any, Tuple[str, str]] = {}
-    queue = list(live)
-
-    def launch() -> None:
-        provider, model, key = queue.pop(0)
-        fut = pool.submit(_attempt, provider, model, key, system, user_text, schema, images, temperature, timeout, max_tokens)
-        pending[fut] = (provider, model)
-
-    try:
-        launch()
-        while pending:
-            done, _ = wait(list(pending), timeout=hedge_after if queue else None, return_when=FIRST_COMPLETED)
-            if not done:            # primary is slow -> hedge with the next candidate
-                launch()
-                continue
-            for fut in done:
-                provider, model = pending.pop(fut)
-                try:
-                    result, label = fut.result()
-                    note = "" if not errors else " (fallback)"
-                    return result, label + note
-                except Exception as exc:
-                    _trip(provider)
-                    errors.append(f"{provider}/{model}: {_redact(str(exc))}")
-                    if queue and not pending:
-                        launch()
-            if queue and not pending:
-                launch()
-        raise LLMError("All AI providers failed. " + " | ".join(errors))
-    finally:
-        pool.shutdown(wait=False)   # never block on a straggler
+    busy = False
+    for model in _models(vision=bool(images)):
+        bad_output = 0
+        for attempt in range(3):
+            try:
+                return _attempt(model, key, system, user_text, schema, images, temperature, timeout, max_tokens), f"groq/{model}"
+            except Exception as exc:  # noqa: BLE001 - classified below
+                status = _status_of(exc)
+                name = type(exc).__name__.lower()
+                log.warning("groq %s attempt %d failed: %s %s", model, attempt + 1, type(exc).__name__, _redact(str(exc)))
+                if status == 401:
+                    raise LLMError("AI_KEY_INVALID")
+                if isinstance(exc, (ValueError, json.JSONDecodeError)) or "validation" in name:
+                    bad_output += 1
+                    if bad_output >= 2:
+                        break          # model keeps returning unusable output -> try the fallback model
+                    continue
+                if status in (400, 413):
+                    break              # retrying the same request won't help; try the fallback model
+                transient = status in (429, 500, 502, 503, 504) or status is None  # None: timeout / connection
+                if not transient:
+                    break
+                busy = True
+                if attempt == 2:
+                    break
+                wait_s = _retry_after(str(exc)) if status == 429 else None
+                time.sleep(wait_s + 0.3 if wait_s is not None and wait_s <= 20 else (2 ** attempt) + random.random() * 0.5)
+    raise LLMError("AI_BUSY" if busy else "AI_FAILED")

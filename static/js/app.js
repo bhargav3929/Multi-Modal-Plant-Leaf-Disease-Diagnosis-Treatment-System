@@ -12,7 +12,28 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  // --- demo ticket (only present when lastsem.com opens the demo with ?ticket=...) ---
+  const TICKET_KEY = 'lastsem_ticket';
+  (function captureTicket() {
+    try {
+      const t = new URLSearchParams(location.search).get('ticket');
+      if (t) {
+        sessionStorage.setItem(TICKET_KEY, t);
+        history.replaceState(null, '', location.pathname + location.hash);
+      }
+    } catch (_) { /* storage blocked: demo falls back to samples only */ }
+  })();
+  const getTicket = () => { try { return sessionStorage.getItem(TICKET_KEY) || ''; } catch (_) { return ''; } };
+  /** fetch() that always uses relative URLs and sends the demo ticket when there is one. */
+  function apiFetch(url, opts = {}) {
+    const headers = new Headers(opts.headers || {});
+    const t = getTicket();
+    if (t) headers.set('X-LastSem-Ticket', t);
+    return fetch(url, { ...opts, headers });
+  }
+
   const state = {
+    mode: 'local', aiReady: false,
     status: null, quota: null, resetAt: 0, samples: [], maxMB: 8,
     active: null,            // the scan result currently shown
     busy: false, cmpBusy: false,
@@ -31,16 +52,17 @@
     let msg = `Request failed (${res.status})`;
     try {
       const j = await res.json();
-      if (typeof j.detail === 'string') msg = j.detail;
-      else if (Array.isArray(j.detail)) msg = j.detail.map((d) => d.msg).join('; ');
+      if (typeof j.error === 'string') msg = j.error;
+      var code = j.code;
     } catch (_) { /* non-JSON body */ }
     const err = new Error(msg);
     err.status = res.status;
+    err.code = code;
     return err;
   }
 
   async function getJSON(url, opts) {
-    const res = await fetch(url, opts);
+    const res = await apiFetch(url, opts);
     if (!res.ok) throw await apiError(res);
     return res.json();
   }
@@ -56,20 +78,21 @@
 
   // ======================================================================= quota pill
   function setQuota(q) {
-    if (!q) return;
+    if (!q) { state.quota = null; $('#quotaPill').hidden = true; return; }
     state.quota = q;
     state.resetAt = q.reset_in_seconds > 0 ? Date.now() + q.reset_in_seconds * 1000 : 0;
     renderQuota();
   }
 
   async function refreshQuota() {
-    try { setQuota(await getJSON('/api/quota')); } catch (_) { /* ignore */ }
+    try { setQuota(await getJSON('api/quota')); } catch (_) { /* ignore */ }
   }
 
   function renderQuota() {
     const q = state.quota;
     if (!q) return;
     const pill = $('#quotaPill');
+    pill.hidden = false;
     $('#quotaText').textContent = `${q.remaining}/${q.limit} Free Demo Scans Left This Hour`;
     pill.classList.toggle('empty', q.remaining === 0);
     pill.classList.toggle('low', q.remaining > 0 && q.remaining <= Math.ceil(q.limit * 0.4));
@@ -250,18 +273,18 @@
   }
 
   // ======================================================================= samples
-  async function fileFromSample(name) {
-    const s = state.samples.find((x) => x.file === name);
+  async function fileFromSample(id) {
+    const s = state.samples.find((x) => x.id === id);
     if (!s) throw new Error('Sample not found');
-    const blob = await (await fetch(s.url)).blob();
-    return new File([blob], s.file, { type: blob.type || 'image/jpeg' });
+    const blob = await (await apiFetch(s.input_url)).blob();
+    return new File([blob], s.input_url.split('/').pop(), { type: blob.type || 'image/jpeg' });
   }
 
   async function loadSamples() {
-    try { state.samples = await getJSON('/api/samples'); } catch (_) { state.samples = []; }
+    try { state.samples = (await getJSON('api/samples')).samples || []; } catch (_) { state.samples = []; }
     $('#sampleBar').innerHTML = state.samples.map((s) => `
-      <button type="button" class="chip" data-sample="${esc(s.file)}" title="${esc(s.hint)}">
-        <img src="${esc(s.url)}" alt="" loading="lazy">${esc(s.label)}</button>`).join('');
+      <button type="button" class="chip" data-sample="${esc(s.id)}" title="${esc(s.hint)}">
+        <img src="${esc(s.input_url)}" alt="" loading="lazy">${esc(s.title)}</button>`).join('');
   }
 
   // ======================================================================= diagnose flow
@@ -279,7 +302,7 @@
   async function streamAnalyze(fd, onEvent) {
     const ctl = new AbortController();
     const wd = setTimeout(() => ctl.abort(), 60000);   // watchdog: never hang the UI
-    const res = await fetch('/api/analyze', { method: 'POST', body: fd, signal: ctl.signal }).finally(() => clearTimeout(wd));
+    const res = await apiFetch('api/analyze', { method: 'POST', body: fd, signal: ctl.signal }).finally(() => clearTimeout(wd));
     if (!res.ok) throw await apiError(res);
     const reader = res.body.getReader();
     const dec = new TextDecoder();
@@ -348,6 +371,7 @@
         } else if (ev.event === 'error') {
           finished = true; setQuota(ev.quota); logLine('error: ' + ev.message);
           stopTimer('Failed', true); showError('Analysis failed', ev.message); renderDebug([], { kb });
+          if (ev.code === 'AI_NOT_CONFIGURED' && state.mode === 'local') openPanel('keysModal');
         }
       });
       if (!finished) { logLine('stream closed early'); stopTimer('Connection lost', true); showError('Connection lost', 'The server closed the stream before finishing. Please try again.'); renderDebug([], { kb }); }
@@ -356,6 +380,7 @@
       logLine('request failed: ' + err.message);
       stopTimer('Failed', true);
       if (err.status === 429) { refreshQuota(); showError('Free demo limit reached', err.message); }
+      else if (err.code === 'AI_NOT_CONFIGURED' && state.mode === 'local') { showError('Groq key needed', err.message); openPanel('keysModal'); }
       else showError('Could not start analysis', err.message);
       renderDebug([], { kb });
     } finally {
@@ -500,7 +525,7 @@
     const fd = new FormData();
     fd.append('baseline', await downscale(base.file)); fd.append('followup', await downscale(follow.file)); fd.append('crop', $('#cmpCrop').value);
     try {
-      const res = await getJSON('/api/compare', { method: 'POST', body: fd });
+      const res = await getJSON('api/compare', { method: 'POST', body: fd });
       setQuota(res.quota);
       renderCompare(res);
     } catch (err) {
@@ -562,7 +587,7 @@
     const c = encodeURIComponent(state.histFilter);
     const box = $('#historyList');
     try {
-      const rows = await getJSON(`/api/history?q=${q}&pathogen_class=${c}`);
+      const rows = await getJSON(`api/history?q=${q}&pathogen_class=${c}`);
       box.innerHTML = rows.length ? rows.map((h) => `
         <div class="h-item" data-id="${h.id}" tabindex="0">
           <img src="${esc(h.thumb)}" alt="">
@@ -579,7 +604,7 @@
 
   async function openScan(id, thenReport) {
     try {
-      const r = await getJSON(`/api/history/${id}`);
+      const r = await getJSON(`api/history/${id}`);
       $$('.mode')[0].click();
       setActive(r);
       closePanel('historyDrawer');
@@ -648,27 +673,36 @@
   function paintKeyState(provider, info) {
     const el = $('#' + provider + 'State');
     el.className = 'badge ' + (info.configured ? 'good' : 'neutral');
-    el.textContent = info.configured ? `active · ${info.source === 'ui' ? 'browser key' : '.env'} · ${info.masked}` : 'not set';
+    el.textContent = info.configured ? `active · ${info.source === 'ui' ? 'saved in app' : '.env'} · ${info.masked}` : 'not set';
   }
 
   async function refreshStatus(openIfMissing) {
     try {
-      const s = await getJSON('/api/status');
-      state.status = s; state.maxMB = s.max_upload_mb; setQuota(s.quota);
-      $('#keyDot').className = 'status-dot ' + (s.any_configured ? 'ok' : 'bad');
-      paintKeyState('groq', s.providers.groq);
-      $('#btnSaveKeys').disabled = !s.can_edit_keys;
-      $('#keysNote').textContent = s.can_edit_keys
-        ? 'Groq is the sole AI provider. Paste a free key (gsk_…) from console.groq.com/keys.'
-        : 'Keys can only be edited from the machine running the server.';
-      if (openIfMissing && !s.any_configured) openPanel('keysModal');
+      const info = await getJSON('api/info');
+      state.mode = info.mode; state.aiReady = !!info.ai.ready; state.maxMB = info.limits.max_upload_mb;
+      setQuota(info.quota);
+      $('#keyDot').className = 'status-dot ' + (info.ai.ready ? 'ok' : 'bad');
+      if (info.mode === 'demo') {
+        // Demo: keys come from the server, so the key screen is hidden; live runs need a ticket.
+        $('#btnKeys').hidden = true;
+        if (info.demo && !info.demo.ticket_valid) {
+          $('#btnAnalyze').title = 'Sign in on lastsem.com to try your own input';
+          if (!state.demoNoted) { state.demoNoted = true; toast('Sign in on lastsem.com to try your own input. Samples work without a ticket.', 'ok'); }
+        }
+        return;
+      }
+      const k = await getJSON('api/keys');
+      paintKeyState('groq', k.groq);
+      $('#btnSaveKeys').disabled = false;
+      $('#keysNote').textContent = 'Groq is the sole AI provider. Paste a free key (gsk_…) from console.groq.com/keys.';
+      if (openIfMissing && !info.ai.ready) openPanel('keysModal');
     } catch (err) { toast('Could not reach the server: ' + err.message, 'error'); }
   }
 
   async function saveKeys() {
     const body = { groq_api_key: $('#groqKey').value.trim() };
     try {
-      const res = await postJSON('/api/keys', body);
+      const res = await postJSON('api/keys', body);
       $('#groqKey').value = '';
       toast(`Saved ${res.saved.join(' + ')} key.`, 'ok');
       await refreshStatus(false);
@@ -678,7 +712,7 @@
 
   async function clearKey(provider) {
     try {
-      await getJSON('/api/keys/' + provider, { method: 'DELETE' });
+      await getJSON('api/keys/' + provider, { method: 'DELETE' });
       toast('Browser-saved key removed.', 'ok');
       await refreshStatus(false);
     } catch (err) { toast(err.message, 'error'); }
@@ -705,7 +739,17 @@
     $('#sampleBar').addEventListener('click', async (e) => {
       const name = e.target.closest('[data-sample]')?.dataset.sample;
       if (!name) return;
-      try { single.setFile(await fileFromSample(name)); } catch (err) { toast(err.message, 'error'); }
+      try {
+        single.setFile(await fileFromSample(name));
+        // Saved result from a real run: show it instantly, no AI call. "Analyse" still runs it live.
+        const detail = await getJSON('api/samples/' + encodeURIComponent(name));
+        if (detail.result) {
+          resetPipeline();
+          setActive({ ...detail.result, thumb: detail.input_url });
+          renderDebug(detail.result.trace || [], { elapsed: detail.result.elapsed_ms || 0, kb: 0 });
+          toast('Showing the saved result for this sample. Press Analyse to run it live.', 'ok');
+        }
+      } catch (err) { toast(err.message, 'error'); }
     });
     $('#resultPane').addEventListener('click', (e) => {
       const act = e.target.closest('[data-act]')?.dataset.act;
@@ -716,7 +760,7 @@
     // compare
     $('#btnCompare').addEventListener('click', runCompare);
     $$('[data-pair]').forEach((b) => b.addEventListener('click', async () => {
-      const pair = b.dataset.pair === 'improving' ? ['early_blight_leaf.jpg', 'healthy_leaf.jpg'] : ['healthy_leaf.jpg', 'powdery_mildew_leaf.jpg'];
+      const pair = b.dataset.pair === 'improving' ? ['early-blight', 'healthy-leaf'] : ['healthy-leaf', 'powdery-mildew'];
       try { base.setFile(await fileFromSample(pair[0])); follow.setFile(await fileFromSample(pair[1])); }
       catch (err) { toast(err.message, 'error'); }
     }));
@@ -734,7 +778,7 @@
       if (act === 'delete') {
         e.stopPropagation();
         if (!confirm('Delete this scan from history?')) return;
-        try { await getJSON('/api/history/' + id, { method: 'DELETE' }); if (state.active?.scan_id == id) { state.active = null; emptyState(); resetPipeline(); } loadHistory(); }
+        try { await getJSON('api/history/' + id, { method: 'DELETE' }); if (state.active?.scan_id == id) { state.active = null; emptyState(); resetPipeline(); } loadHistory(); }
         catch (err) { toast(err.message, 'error'); }
       } else openScan(id, act === 'report');
     });

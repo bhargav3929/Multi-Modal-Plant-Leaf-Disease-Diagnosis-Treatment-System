@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS rate_limit (
 );
 CREATE INDEX IF NOT EXISTS idx_rate_ip_ts ON rate_limit (ip, ts);
 
+CREATE TABLE IF NOT EXISTS demo_runs (
+    id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    tid TEXT NOT NULL,
+    ts  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_demo_runs_tid ON demo_runs (tid);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL

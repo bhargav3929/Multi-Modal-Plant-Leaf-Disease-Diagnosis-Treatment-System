@@ -1,0 +1,28 @@
+{
+  "crop_hint": "",
+  "city": "",
+  "provider": "groq/qwen/qwen3.8-27b",
+  "halted": true,
+  "warning": "Please upload a clear, well-lit close-up photo of a single leaf for accurate analysis.",
+  "gatekeeper": {
+    "is_real_leaf": false,
+    "category": "non_plant",
+    "reason": "Image shows dark cups on wood, no plant material.",
+    "user_message": "Please upload a clear, well-lit close-up photo of a single leaf for accurate analysis."
+  },
+  "diagnosis": null,
+  "weather": null,
+  "treatment": null,
+  "prevention": null,
+  "trace": [
+    {
+      "node": "specimen_gatekeeper_node",
+      "label": "Specimen Gatekeeper",
+      "status": "halted",
+      "detail": "Rejected (non_plant) - pipeline stopped",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 22498
+    }
+  ],
+  "elapsed_ms": 22500
+}

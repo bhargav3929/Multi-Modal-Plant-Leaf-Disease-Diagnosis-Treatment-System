@@ -106,7 +106,7 @@ def pathogen_vision_node(state: PathologyState) -> Dict[str, Any]:
     text = "Diagnose this leaf and write the treatment and prevention plans." + (
         f" The grower says the crop is: {hint}." if hint else "")
     out, provider = llm.invoke_json(prompts.BUNDLE, text, schemas.Bundle, images=[state["image_b64"]],
-                                    timeout=config.BUNDLE_TIMEOUT_SECONDS, max_tokens=config.BUNDLE_MAX_TOKENS, hedge_after=7.0)
+                                    timeout=config.BUNDLE_TIMEOUT_SECONDS, max_tokens=config.BUNDLE_MAX_TOKENS)
     d = out.diagnosis.model_dump()
     if hint and d["crop"].lower() in ("", "unknown"):
         d["crop"] = hint

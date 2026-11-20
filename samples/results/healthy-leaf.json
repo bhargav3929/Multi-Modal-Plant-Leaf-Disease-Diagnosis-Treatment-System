@@ -1,0 +1,120 @@
+{
+  "crop_hint": "",
+  "city": "",
+  "provider": "groq/qwen/qwen3.8-27b",
+  "halted": false,
+  "warning": "",
+  "gatekeeper": {
+    "is_real_leaf": true,
+    "category": "leaf_photo",
+    "reason": "Real camera photo of plant leaves in field.",
+    "user_message": ""
+  },
+  "diagnosis": {
+    "crop": "Tomato",
+    "disease": "Healthy",
+    "scientific_name": "",
+    "pathogen_class": "Healthy",
+    "confidence": 95.0,
+    "severity": "None",
+    "lesion_markers": [
+      "Uniform green leaf color",
+      "No visible spots or lesions",
+      "Intact leaf margins",
+      "Normal leaf texture"
+    ],
+    "summary": "The plant appears healthy with no visible signs of disease or pest damage. The leaves show a uniform green color and normal structure."
+  },
+  "weather": {
+    "available": false,
+    "reason": "No city supplied - microclimate analysis skipped."
+  },
+  "treatment": {
+    "urgency": "No treatment is required at this time.",
+    "organic": {
+      "summary": "Maintain current healthy conditions with routine care.",
+      "steps": [
+        "Monitor plants weekly",
+        "Ensure consistent watering",
+        "Apply balanced organic fertilizer"
+      ],
+      "products": [
+        "Compost",
+        "Fish emulsion"
+      ]
+    },
+    "chemical": {
+      "required": false,
+      "active_ingredient_class": "",
+      "examples": [],
+      "application_method": "",
+      "ppe": [],
+      "harvest_waiting_guidance": "check the label's pre-harvest interval",
+      "resistance_management": ""
+    },
+    "monitoring": [
+      "Check for new growth",
+      "Inspect undersides of leaves",
+      "Watch for early pest signs"
+    ]
+  },
+  "prevention": {
+    "crop_rotation": [
+      "Rotate with non-solanaceous crops"
+    ],
+    "resistant_varieties": [
+      "Select disease-resistant cultivars"
+    ],
+    "soil_health": [
+      "Maintain soil organic matter",
+      "Test soil pH annually"
+    ],
+    "cultural_practices": [
+      "Provide adequate air circulation",
+      "Water at the base"
+    ]
+  },
+  "trace": [
+    {
+      "node": "specimen_gatekeeper_node",
+      "label": "Specimen Gatekeeper",
+      "status": "ok",
+      "detail": "Real leaf photo",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 1025
+    },
+    {
+      "node": "pathogen_vision_node",
+      "label": "Pathogen Vision",
+      "status": "ok",
+      "detail": "Healthy - 95%",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 23648
+    },
+    {
+      "node": "weather_telemetry_node",
+      "label": "Weather Telemetry",
+      "status": "skipped",
+      "detail": "No city supplied - microclimate analysis skipped.",
+      "provider": "open-meteo",
+      "ms": 0
+    },
+    {
+      "node": "treatment_protocol_node",
+      "label": "Treatment Protocol",
+      "status": "ok",
+      "detail": "Organic + chemical protocols ready",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 0
+    },
+    {
+      "node": "preventive_advisor_node",
+      "label": "Preventive Advisor",
+      "status": "ok",
+      "detail": "Saved as scan #8",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 43
+    }
+  ],
+  "elapsed_ms": 24723
+}

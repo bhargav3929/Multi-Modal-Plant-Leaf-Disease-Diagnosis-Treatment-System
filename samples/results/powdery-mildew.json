@@ -1,0 +1,133 @@
+{
+  "crop_hint": "",
+  "city": "",
+  "provider": "groq/qwen/qwen3.8-27b",
+  "halted": false,
+  "warning": "",
+  "gatekeeper": {
+    "is_real_leaf": true,
+    "category": "leaf_photo",
+    "reason": "Real camera photo of a diseased leaf.",
+    "user_message": ""
+  },
+  "diagnosis": {
+    "crop": "Cucumber",
+    "disease": "Powdery Mildew",
+    "scientific_name": "Podosphaera xanthii",
+    "pathogen_class": "Fungal",
+    "confidence": 95.0,
+    "severity": "Severe",
+    "lesion_markers": [
+      "Thick white powdery coating on leaf surface",
+      "Cottony fungal growth covering veins",
+      "Yellowing and browning of leaf tissue",
+      "Multiple leaves affected in the canopy"
+    ],
+    "summary": "The leaves are heavily coated in a white, powdery fungal growth characteristic of powdery mildew. This severe infection is likely reducing the plant's photosynthetic capacity significantly."
+  },
+  "weather": {
+    "available": false,
+    "reason": "No city supplied - microclimate analysis skipped."
+  },
+  "treatment": {
+    "urgency": "Immediate action is required to prevent total canopy loss and crop failure.",
+    "organic": {
+      "summary": "Use biological controls and sulfur-based sprays to manage the fungal load.",
+      "steps": [
+        "Remove and destroy the most severely infected leaves",
+        "Apply potassium bicarbonate or sulfur dust",
+        "Increase airflow by pruning lower leaves",
+        "Apply neem oil as a suppressant"
+      ],
+      "products": [
+        "Sulfur dust",
+        "Potassium bicarbonate",
+        "Neem oil",
+        "Myclobutanis (bio-fungicide)"
+      ]
+    },
+    "chemical": {
+      "required": true,
+      "active_ingredient_class": "Strobilurin or SDHI fungicide",
+      "examples": [
+        "Azoxystrobin",
+        "Pyraclostrobin",
+        "Trifloxystrobin"
+      ],
+      "application_method": "Thorough spray covering both leaf surfaces",
+      "ppe": [
+        "Gloves",
+        "Eye protection",
+        "Long sleeves"
+      ],
+      "harvest_waiting_guidance": "Check the label's pre-harvest interval",
+      "resistance_management": "Rotate fungicide classes with different modes of action"
+    },
+    "monitoring": [
+      "Check new growth daily for white spots",
+      "Monitor humidity and temperature levels",
+      "Inspect the undersides of leaves"
+    ]
+  },
+  "prevention": {
+    "crop_rotation": [
+      "Rotate with non-host crops for 2-3 years",
+      "Avoid planting cucurbits in the same spot"
+    ],
+    "resistant_varieties": [
+      "Select mildew-resistant cultivars",
+      "Check seed labels for PM resistance"
+    ],
+    "soil_health": [
+      "Maintain balanced soil fertility",
+      "Avoid excess nitrogen fertilization"
+    ],
+    "cultural_practices": [
+      "Water at the base to keep leaves dry",
+      "Space plants for better air circulation"
+    ]
+  },
+  "trace": [
+    {
+      "node": "specimen_gatekeeper_node",
+      "label": "Specimen Gatekeeper",
+      "status": "ok",
+      "detail": "Real leaf photo",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 21236
+    },
+    {
+      "node": "pathogen_vision_node",
+      "label": "Pathogen Vision",
+      "status": "ok",
+      "detail": "Powdery Mildew - 95%",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 25287
+    },
+    {
+      "node": "weather_telemetry_node",
+      "label": "Weather Telemetry",
+      "status": "skipped",
+      "detail": "No city supplied - microclimate analysis skipped.",
+      "provider": "open-meteo",
+      "ms": 0
+    },
+    {
+      "node": "treatment_protocol_node",
+      "label": "Treatment Protocol",
+      "status": "ok",
+      "detail": "Organic + chemical protocols ready",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 0
+    },
+    {
+      "node": "preventive_advisor_node",
+      "label": "Preventive Advisor",
+      "status": "ok",
+      "detail": "Saved as scan #10",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 10
+    }
+  ],
+  "elapsed_ms": 46538
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command startup for Linux / macOS: ./start.sh
+# One-command start for macOS / Linux:  chmod +x start.sh && ./start.sh
 set -e
 cd "$(dirname "$0")"
 
@@ -10,22 +10,28 @@ for c in python3 python; do
   fi
 done
 if [ -z "$PY" ]; then
-  echo "[ERROR] Python 3.10+ not found. Install it from https://www.python.org/downloads/" >&2
+  echo "Python 3.10+ is needed. Install it from https://www.python.org/downloads/ and run ./start.sh again."
   exit 1
 fi
 
-if [ ! -x ".venv/bin/python" ]; then
-  echo "Creating virtual environment..."
-  "$PY" -m venv .venv
-fi
+[ -x .venv/bin/python ] || { echo "Setting up (first run only)..."; "$PY" -m venv .venv; }
+[ -f .env ] || { cp .env.example .env; echo "Created .env. You can paste your free Groq key in the app."; }
 
-if [ ! -f ".env" ]; then
-  cp .env.example .env
-  echo "Created .env from .env.example - add your free API key there, or use the 'API Keys' button in the app."
-fi
+echo "Installing requirements..."
+.venv/bin/python -m pip install --disable-pip-version-check -q -r requirements.txt || {
+  echo "Install failed. Check your internet connection and run ./start.sh again."; exit 1; }
 
-echo "Installing / checking dependencies (first run takes a few minutes)..."
-.venv/bin/python -m pip install --disable-pip-version-check -q -r requirements.txt
+PORT=$(grep -E '^PORT=' .env | cut -d= -f2 | tr -d '[:space:]"'"'"); PORT=${PORT:-8001}
+HOST=$(grep -E '^HOST=' .env | cut -d= -f2 | tr -d '[:space:]"'"'"); HOST=${HOST:-127.0.0.1}
 
-echo "Starting server on http://127.0.0.1:8001  (Ctrl+C to stop)"
-exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+(
+  for i in $(seq 1 60); do
+    if curl -fs "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+      (open "http://127.0.0.1:$PORT" 2>/dev/null || xdg-open "http://127.0.0.1:$PORT" 2>/dev/null) && break
+    fi
+    sleep 1
+  done
+) &
+
+echo "Open http://127.0.0.1:$PORT  (Ctrl+C to stop)"
+exec .venv/bin/python -m uvicorn app.main:app --host "$HOST" --port "$PORT"

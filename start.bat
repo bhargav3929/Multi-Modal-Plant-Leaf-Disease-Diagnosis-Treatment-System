@@ -1,38 +1,21 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Plant Pathology Console
+title Plant Leaf Disease Diagnosis
 
-rem --- find Python 3.10+ (py launcher first, then python) ---
-set "PY="
-py -3 --version >nul 2>nul
-if not errorlevel 1 set "PY=py -3"
-if not defined PY (
-    python --version >nul 2>nul
-    if not errorlevel 1 set "PY=python"
-)
-if not defined PY (
-    echo [ERROR] Python 3.10 or newer was not found.
-    echo Install it from https://www.python.org/downloads/ ^(tick "Add python.exe to PATH"^) and run start.bat again.
-    pause
-    exit /b 1
-)
+where python >nul 2>nul || (echo Python 3.10+ is needed. Install it from https://www.python.org/downloads/ and tick "Add python.exe to PATH". & pause & exit /b 1)
+python -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" || (echo Python 3.10 or newer is needed. & pause & exit /b 1)
 
-if not exist ".venv\Scripts\python.exe" (
-    echo Creating virtual environment...
-    %PY% -m venv .venv
-    if errorlevel 1 ( echo [ERROR] Could not create the virtual environment. & pause & exit /b 1 )
-)
+if not exist .venv\Scripts\python.exe (echo Setting up, first run only... & python -m venv .venv)
+if not exist .env (copy .env.example .env >nul & echo Created .env. You can paste your free Groq key in the app.)
+echo Installing requirements...
+.venv\Scripts\python -m pip install --disable-pip-version-check -q -r requirements.txt || (echo Install failed. Check your internet connection and run start.bat again. & pause & exit /b 1)
 
-if not exist ".env" (
-    copy /y ".env.example" ".env" >nul
-    echo Created .env from .env.example - add your free API key there, or use the "API Keys" button in the app.
-)
+set PORT=8001
+set HOST=127.0.0.1
+for /f "tokens=1,* delims==" %%a in ('findstr /b "PORT= HOST=" .env') do set %%a=%%b
 
-echo Installing / checking dependencies ^(first run takes a few minutes^)...
-".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -q -r requirements.txt
-if errorlevel 1 ( echo [ERROR] Dependency installation failed. & pause & exit /b 1 )
-
-echo Starting server on http://127.0.0.1:8001  ^(Ctrl+C to stop^)
-".venv\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+start "" powershell -NoProfile -WindowStyle Hidden -Command "for($i=0;$i -lt 60;$i++){try{Invoke-WebRequest -UseBasicParsing http://127.0.0.1:%PORT%/health | Out-Null; Start-Process http://127.0.0.1:%PORT%; break}catch{Start-Sleep 1}}"
+echo Open http://127.0.0.1:%PORT%  (close this window to stop)
+.venv\Scripts\python -m uvicorn app.main:app --host %HOST% --port %PORT%
 pause

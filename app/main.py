@@ -5,47 +5,56 @@ import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, db, graph, imaging, llm, prompts, ratelimit, samples, schemas
+from . import config, db, demo, errors, graph, imaging, llm, prompts, ratelimit, samples, schemas
+from .errors import ApiError
 
 log = logging.getLogger("agri")
-APP_TITLE = "Agentic Multi-Modal Plant Pathology & Treatment System via LangGraph"
+APP_TITLE = config.PROJECT_NAME
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     db.init_db()
     samples.ensure_samples()
+    if config.DEMO_MODE:
+        if not config.DEMO_TICKET_SECRET:
+            log.warning("DEMO_MODE is on but DEMO_TICKET_SECRET is empty: every ticket will be rejected.")
+        demo.cleanup()
     yield
 
 
-app = FastAPI(title=APP_TITLE, version="1.1.0", lifespan=lifespan)
+app = FastAPI(title=APP_TITLE, version=config.VERSION, lifespan=lifespan)
+errors.install(app)
 
 
 # --------------------------------------------------------------------------- helpers
-def client_ip(request: Request) -> str:
-    if config.TRUST_PROXY:
-        fwd = request.headers.get("x-forwarded-for")
-        if fwd:
-            return fwd.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+def owner(request: Request) -> str:
+    """Whose history and quota this is: the ticket id in demo mode, the client address otherwise."""
+    return demo.owner_id(request)
 
 
-def _is_loopback(request: Request) -> bool:
-    return bool(request.client) and request.client.host in ("127.0.0.1", "::1", "localhost")
+def _keys_guard(request: Request) -> None:
+    """Key routes exist only in the download version, and only for this machine."""
+    if config.DEMO_MODE:
+        raise ApiError("NOT_FOUND", "Not found.")
+    local = bool(request.client) and request.client.host in ("127.0.0.1", "::1")
+    proxied = "x-forwarded-for" in request.headers or "forwarded" in request.headers
+    if not local or proxied:
+        raise ApiError("KEYS_LOCAL_ONLY", "API keys can only be changed from the machine running the server.")
 
 
 def _read_upload(upload: UploadFile) -> bytes:
-    limit = config.MAX_UPLOAD_MB * 1024 * 1024
+    limit = config.UPLOAD_LIMIT_MB * 1024 * 1024
     data = upload.file.read(limit + 1)
     if len(data) > limit:
-        raise HTTPException(413, f"Image is larger than {config.MAX_UPLOAD_MB} MB. Please upload a smaller photo.")
+        raise ApiError("TOO_LARGE", f"Image is larger than {config.UPLOAD_LIMIT_MB} MB. Please upload a smaller photo.")
     if not data:
-        raise HTTPException(400, "The uploaded file is empty.")
+        raise ApiError("BAD_INPUT", "The uploaded file is empty.")
     return data
 
 
@@ -53,39 +62,69 @@ def _prepare(upload: UploadFile):
     try:
         return imaging.prepare_image(_read_upload(upload))
     except imaging.ImageError as exc:
-        raise HTTPException(400, str(exc))
+        raise ApiError("BAD_INPUT", str(exc))
 
 
 def _require_provider() -> None:
     if not llm.configured_providers():
-        raise HTTPException(
-            503, "No AI provider key is configured yet. Click 'API Keys' and paste a free Groq key.")
+        raise ApiError("AI_NOT_CONFIGURED", llm.MESSAGES["AI_NOT_CONFIGURED"])
 
 
 def _ndjson(obj: dict) -> bytes:
     return (json.dumps(obj) + "\n").encode("utf-8")
 
 
-# --------------------------------------------------------------------------- status & keys
-@app.get("/api/status")
-def api_status(request: Request):
-    providers = {}
-    for p in config.PROVIDERS:
-        key, source = llm.get_key(p)
-        providers[p] = {"configured": bool(key), "source": source, "masked": llm.mask(key)}
+def _stream_error(code: str, message: str, quota) -> bytes:
+    return _ndjson({"event": "error", "message": message, "error": message, "code": code, "quota": quota})
+
+
+# --------------------------------------------------------------------------- standard routes
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/api/info")
+def api_info(request: Request):
+    key, _ = llm.get_key("groq")
     return {
-        "title": APP_TITLE,
-        "providers": providers,
-        "any_configured": any(v["configured"] for v in providers.values()),
-        "can_edit_keys": _is_loopback(request) or config.ALLOW_REMOTE_KEY_EDIT,
-        "max_upload_mb": config.MAX_UPLOAD_MB,
-        "quota": ratelimit.status(client_ip(request)),
+        "name": config.PROJECT_NAME,
+        "slug": config.PROJECT_SLUG,
+        "number": config.PROJECT_NUMBER,
+        "version": config.VERSION,
+        "mode": "demo" if config.DEMO_MODE else "local",
+        "ai": {"provider": "groq", "ready": bool(key), "model": config.GROQ_VISION_MODEL},
+        "limits": {"max_upload_mb": config.UPLOAD_LIMIT_MB},
+        "demo": demo.info(request),
+        "quota": ratelimit.status(owner(request)),
     }
 
 
 @app.get("/api/quota")
 def api_quota(request: Request):
-    return ratelimit.status(client_ip(request))
+    return ratelimit.status(owner(request))
+
+
+@app.get("/api/samples")
+def api_samples():
+    return samples.sample_manifest()
+
+
+@app.get("/api/samples/{sample_id}")
+def api_sample(sample_id: str):
+    detail = samples.sample_detail(sample_id)
+    if detail is None:
+        raise ApiError("NOT_FOUND", "That sample doesn't exist.")
+    return detail
+
+
+# --------------------------------------------------------------------------- keys (download version only)
+@app.get("/api/keys")
+def get_keys():
+    if config.DEMO_MODE:
+        raise ApiError("NOT_FOUND", "Not found.")
+    key, source = llm.get_key("groq")
+    return {"groq": {"configured": bool(key), "source": source or "none", "masked": llm.mask(key)}}
 
 
 class KeysRequest(BaseModel):
@@ -94,53 +133,38 @@ class KeysRequest(BaseModel):
 
 @app.post("/api/keys")
 def save_keys(body: KeysRequest, request: Request):
-    if not (_is_loopback(request) or config.ALLOW_REMOTE_KEY_EDIT):
-        raise HTTPException(403, "API keys can only be changed from the machine running the server.")
-    saved = []
-    for provider, value in (("groq", body.groq_api_key),):
-        value = (value or "").strip()
-        if not value:
-            continue
-        if len(value) < 10 or any(c.isspace() for c in value):
-            raise HTTPException(400, f"That {provider.title()} key doesn't look valid.")
-        db.set_setting(f"{provider}_api_key", value)
-        saved.append(provider)
-    if not saved:
-        raise HTTPException(400, "Paste your Groq API key.")
-    return {"saved": saved}
+    _keys_guard(request)
+    value = (body.groq_api_key or "").strip()
+    if not llm.usable_key(value):
+        raise ApiError("BAD_INPUT", "That doesn't look like a Groq key. It should start with gsk_ and have no spaces.")
+    db.set_setting("groq_api_key", value)
+    return {"saved": ["groq"]}
 
 
-@app.delete("/api/keys/{provider}")
-def delete_key(provider: str, request: Request):
-    if not (_is_loopback(request) or config.ALLOW_REMOTE_KEY_EDIT):
-        raise HTTPException(403, "API keys can only be changed from the machine running the server.")
-    if provider not in config.PROVIDERS:
-        raise HTTPException(404, "Unknown provider.")
-    db.delete_setting(f"{provider}_api_key")
-    return {"removed": provider}
-
-
-@app.get("/api/samples")
-def api_samples():
-    return samples.sample_manifest()
+@app.delete("/api/keys/groq")
+def delete_key(request: Request):
+    _keys_guard(request)
+    db.delete_setting("groq_api_key")
+    return {"removed": "groq"}
 
 
 # --------------------------------------------------------------------------- analyze (LangGraph)
 @app.post("/api/analyze")
 def analyze(request: Request, file: UploadFile = File(...), crop: str = Form(""), city: str = Form("")):
     """Run the 5-node pipeline and stream progress as newline-delimited JSON events."""
-    ip = client_ip(request)
+    who = owner(request)
     crop, city = crop.strip()[:60], city.strip()[:80]
-    image_b64, thumb = _prepare(file)      # validate first so bad uploads never burn quota
+    image_b64, thumb = _prepare(file)      # validate first so bad uploads never burn a run
+    ticket = demo.require_run(request)
     _require_provider()
-    quota = ratelimit.consume(ip)          # raises HTTP 429 when over the hourly limit
+    ratelimit.check(who)
     t0 = time.perf_counter()
 
-    init = {"image_b64": image_b64, "thumb": thumb, "client_ip": ip, "crop_hint": crop, "city": city, "trace": []}
+    init = {"image_b64": image_b64, "thumb": thumb, "client_ip": who, "crop_hint": crop, "city": city, "trace": []}
 
     def event_stream():
         state = dict(init)
-        yield _ndjson({"event": "start", "quota": quota, "payload_kb": round(len(image_b64) * 0.75 / 1024, 1)})
+        yield _ndjson({"event": "start", "quota": ratelimit.status(who), "payload_kb": round(len(image_b64) * 0.75 / 1024, 1)})
         try:
             for chunk in graph.PIPELINE.stream(init, stream_mode="updates"):
                 for node, update in chunk.items():
@@ -156,15 +180,16 @@ def analyze(request: Request, file: UploadFile = File(...), crop: str = Form("")
             scan_id = state.get("scan_id")
             if scan_id:  # re-save so the stored record includes node 5's own latency
                 db.update_scan_record(scan_id, result)
+            demo.record_run(ticket)            # count a run only now that it worked
+            quota = ratelimit.record(who)
             result.update(scan_id=scan_id, thumb=thumb, created_at=time.time(),
                           elapsed_ms=round((time.perf_counter() - t0) * 1000), payload_kb=round(len(image_b64) * 0.75 / 1024, 1))
-            yield _ndjson({"event": "result", "result": result, "quota": ratelimit.status(ip)})
+            yield _ndjson({"event": "result", "result": result, "quota": quota})
         except llm.LLMError as exc:
-            yield _ndjson({"event": "error", "message": str(exc), "quota": ratelimit.status(ip)})
-        except Exception as exc:  # noqa: BLE001 - surface anything unexpected to the UI
+            yield _stream_error(exc.code, str(exc), ratelimit.status(who))
+        except Exception:  # noqa: BLE001 - surface anything unexpected to the UI, politely
             log.exception("analysis failed")
-            yield _ndjson({"event": "error", "message": f"Unexpected error: {type(exc).__name__}",
-                           "quota": ratelimit.status(ip)})
+            yield _stream_error("AI_FAILED", llm.MESSAGES["AI_FAILED"], ratelimit.status(who))
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
@@ -174,17 +199,20 @@ def analyze(request: Request, file: UploadFile = File(...), crop: str = Form("")
 @app.post("/api/compare")
 def compare(request: Request, baseline: UploadFile = File(...), followup: UploadFile = File(...),
             crop: str = Form("")):
-    ip = client_ip(request)
+    who = owner(request)
     b64_a, thumb_a = _prepare(baseline)
     b64_b, thumb_b = _prepare(followup)
+    ticket = demo.require_run(request)
     _require_provider()
-    quota = ratelimit.consume(ip)
+    ratelimit.check(who)
     crop = crop.strip()[:60]
     text = "Compare IMAGE 1 (Day 1 Baseline) with IMAGE 2 (Follow-Up Scan)." + (f" Crop: {crop}." if crop else "")
     try:
         comp, provider = llm.invoke_json(prompts.COMPARE, text, schemas.Comparison, images=[b64_a, b64_b])
     except llm.LLMError as exc:
-        raise HTTPException(502, str(exc))
+        raise ApiError(exc.code, str(exc))
+    demo.record_run(ticket)
+    quota = ratelimit.record(who)
     data = comp.model_dump()
     if not (data["baseline"]["is_valid_plant_leaf"] and data["followup"]["is_valid_plant_leaf"]):
         data["trend"] = "Not Comparable"
@@ -196,21 +224,21 @@ def compare(request: Request, baseline: UploadFile = File(...), followup: Upload
 # --------------------------------------------------------------------------- history
 @app.get("/api/history")
 def history(request: Request, q: str = Query("", max_length=80), pathogen_class: str = Query("", max_length=20)):
-    return db.list_scans(client_ip(request), q.strip(), pathogen_class.strip())
+    return db.list_scans(owner(request), q.strip(), pathogen_class.strip())
 
 
 @app.get("/api/history/{scan_id}")
 def history_item(scan_id: int, request: Request):
-    scan = db.get_scan(client_ip(request), scan_id)
+    scan = db.get_scan(owner(request), scan_id)
     if not scan:
-        raise HTTPException(404, "Scan not found.")
+        raise ApiError("NOT_FOUND", "Scan not found.")
     return scan
 
 
 @app.delete("/api/history/{scan_id}")
 def history_delete(scan_id: int, request: Request):
-    if not db.delete_scan(client_ip(request), scan_id):
-        raise HTTPException(404, "Scan not found.")
+    if not db.delete_scan(owner(request), scan_id):
+        raise ApiError("NOT_FOUND", "Scan not found.")
     return {"deleted": scan_id}
 
 
@@ -226,6 +254,8 @@ async def no_store_static(request: Request, call_next):
 
 
 app.mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static")
+config.SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/samples", StaticFiles(directory=str(config.SAMPLES_DIR)), name="samples")
 
 
 @app.get("/", include_in_schema=False)

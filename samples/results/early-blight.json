@@ -1,0 +1,131 @@
+{
+  "crop_hint": "",
+  "city": "",
+  "provider": "groq/qwen/qwen3.8-27b",
+  "halted": false,
+  "warning": "",
+  "gatekeeper": {
+    "is_real_leaf": true,
+    "category": "leaf_photo",
+    "reason": "Real camera photo of diseased plant leaves.",
+    "user_message": ""
+  },
+  "diagnosis": {
+    "crop": "Tomato",
+    "disease": "Early Blight",
+    "scientific_name": "Alternaria solani",
+    "pathogen_class": "Fungal",
+    "confidence": 85.0,
+    "severity": "Mild",
+    "lesion_markers": [
+      "Dark brown necrotic spots",
+      "Distinct yellow chlorotic halos",
+      "Concentric ring patterns",
+      "Lesions on lower foliage"
+    ],
+    "summary": "The image shows characteristic early blight symptoms with target-spot lesions on the leaves. The infection appears to be in the early stages, affecting primarily the lower canopy."
+  },
+  "weather": {
+    "available": false,
+    "reason": "No city supplied - microclimate analysis skipped."
+  },
+  "treatment": {
+    "urgency": "Begin treatment immediately to prevent the fungal spread to upper leaves and fruit.",
+    "organic": {
+      "summary": "Use biological controls and copper-based sprays to manage the fungal load.",
+      "steps": [
+        "Remove and destroy infected lower leaves",
+        "Apply copper-based fungicide weekly",
+        "Ensure good air circulation around plants",
+        "Water at the base to keep foliage dry"
+      ],
+      "products": [
+        "Copper hydroxide",
+        "Bacillus subtilis",
+        "Neem oil"
+      ]
+    },
+    "chemical": {
+      "required": true,
+      "active_ingredient_class": "Strobilurin or DMI fungicides",
+      "examples": [
+        "Azoxystrobin",
+        "Chlorothalonil",
+        "Mancozeb"
+      ],
+      "application_method": "Thorough foliar spray covering both leaf surfaces",
+      "ppe": [
+        "Gloves",
+        "Eye protection",
+        "Long sleeves"
+      ],
+      "harvest_waiting_guidance": "Check the label's pre-harvest interval",
+      "resistance_management": "Rotate fungicide classes with different modes of action"
+    },
+    "monitoring": [
+      "Inspect lower leaves weekly",
+      "Check for new spots after rain",
+      "Monitor humidity levels in the canopy"
+    ]
+  },
+  "prevention": {
+    "crop_rotation": [
+      "Rotate with non-solanaceous crops for 3 years"
+    ],
+    "resistant_varieties": [
+      "Select varieties with 'Ve' resistance genes"
+    ],
+    "soil_health": [
+      "Apply organic matter to improve soil structure",
+      "Maintain balanced soil pH levels"
+    ],
+    "cultural_practices": [
+      "Mulch to prevent soil splash",
+      "Prune lower leaves for airflow",
+      "Water in the morning only"
+    ]
+  },
+  "trace": [
+    {
+      "node": "specimen_gatekeeper_node",
+      "label": "Specimen Gatekeeper",
+      "status": "ok",
+      "detail": "Real leaf photo",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 803
+    },
+    {
+      "node": "pathogen_vision_node",
+      "label": "Pathogen Vision",
+      "status": "ok",
+      "detail": "Early Blight - 85%",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 2285
+    },
+    {
+      "node": "weather_telemetry_node",
+      "label": "Weather Telemetry",
+      "status": "skipped",
+      "detail": "No city supplied - microclimate analysis skipped.",
+      "provider": "open-meteo",
+      "ms": 0
+    },
+    {
+      "node": "treatment_protocol_node",
+      "label": "Treatment Protocol",
+      "status": "ok",
+      "detail": "Organic + chemical protocols ready",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 0
+    },
+    {
+      "node": "preventive_advisor_node",
+      "label": "Preventive Advisor",
+      "status": "ok",
+      "detail": "Saved as scan #9",
+      "provider": "groq/qwen/qwen3.8-27b",
+      "ms": 43
+    }
+  ],
+  "elapsed_ms": 94447
+}
