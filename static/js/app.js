@@ -656,20 +656,20 @@
       const s = await getJSON('/api/status');
       state.status = s; state.maxMB = s.max_upload_mb; setQuota(s.quota);
       $('#keyDot').className = 'status-dot ' + (s.any_configured ? 'ok' : 'bad');
-      paintKeyState('gemini', s.providers.gemini); paintKeyState('groq', s.providers.groq);
+      paintKeyState('groq', s.providers.groq);
       $('#btnSaveKeys').disabled = !s.can_edit_keys;
       $('#keysNote').textContent = s.can_edit_keys
-        ? 'Gemini is tried first; Groq takes over automatically if Gemini is unavailable or rate-limited.'
+        ? 'Groq is the sole AI provider. Paste a free key (gsk_…) from console.groq.com/keys.'
         : 'Keys can only be edited from the machine running the server.';
       if (openIfMissing && !s.any_configured) openPanel('keysModal');
     } catch (err) { toast('Could not reach the server: ' + err.message, 'error'); }
   }
 
   async function saveKeys() {
-    const body = { gemini_api_key: $('#geminiKey').value.trim(), groq_api_key: $('#groqKey').value.trim() };
+    const body = { groq_api_key: $('#groqKey').value.trim() };
     try {
       const res = await postJSON('/api/keys', body);
-      $('#geminiKey').value = ''; $('#groqKey').value = '';
+      $('#groqKey').value = '';
       toast(`Saved ${res.saved.join(' + ')} key.`, 'ok');
       await refreshStatus(false);
       closePanel('keysModal');

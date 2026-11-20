@@ -132,24 +132,17 @@
 <!-- API keys modal -->
 <div id="keysModal" class="modal no-print" hidden role="dialog" aria-modal="true" aria-labelledby="keysTitle">
   <div class="modal-card">
-    <div class="drawer-head"><h2 id="keysTitle">AI Provider Keys</h2><button class="icon-btn" data-close="keysModal" aria-label="Close">✕</button></div>
+    <div class="drawer-head"><h2 id="keysTitle">Groq API Key</h2><button class="icon-btn" data-close="keysModal" aria-label="Close">✕</button></div>
     <p class="muted">Paste your own free key - no code editing needed. Keys are stored only in this machine's local database and are never sent anywhere except the provider itself.</p>
     <div class="key-row">
-      <label class="field"><span>Gemini API key <em>(primary · Gemini Flash)</em></span>
-        <input id="geminiKey" type="password" autocomplete="off" placeholder="AIza…"></label>
-      <div class="key-meta"><span id="geminiState" class="badge neutral">not set</span>
-        <button class="link-btn" type="button" data-clear="gemini">Remove</button>
-        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get free key ↗</a></div>
-    </div>
-    <div class="key-row">
-      <label class="field"><span>Groq API key <em>(fallback · Qwen vision)</em></span>
+      <label class="field"><span>Groq API key <em>(required · Llama vision)</em></span>
         <input id="groqKey" type="password" autocomplete="off" placeholder="gsk_…"></label>
       <div class="key-meta"><span id="groqState" class="badge neutral">not set</span>
         <button class="link-btn" type="button" data-clear="groq">Remove</button>
         <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Get free key ↗</a></div>
     </div>
     <p id="keysNote" class="muted small"></p>
-    <div class="modal-actions"><button class="btn ghost" data-close="keysModal" type="button">Cancel</button><button id="btnSaveKeys" class="btn primary" type="button">Save keys</button></div>
+    <div class="modal-actions"><button class="btn ghost" data-close="keysModal" type="button">Cancel</button><button id="btnSaveKeys" class="btn primary" type="button">Save key</button></div>
   </div>
 </div>
 

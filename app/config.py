@@ -31,13 +31,12 @@ TRUST_PROXY = _flag("TRUST_PROXY")
 ALLOW_REMOTE_KEY_EDIT = _flag("ALLOW_REMOTE_KEY_EDIT")
 
 # --- Demo quota ---------------------------------------------------------------
-RATE_LIMIT_PER_HOUR = max(1, _int("RATE_LIMIT_PER_HOUR", 5))
+RATE_LIMIT_PER_HOUR = max(1, _int("RATE_LIMIT_PER_HOUR", 15))
 RATE_WINDOW_SECONDS = 3600
 
 # --- AI providers -------------------------------------------------------------
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
-GROQ_VISION_MODEL_FALLBACK = os.getenv("GROQ_VISION_MODEL_FALLBACK", "qwen/qwen3.8-27b")
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_VISION_MODEL_FALLBACK = os.getenv("GROQ_VISION_MODEL_FALLBACK", "llama-3.2-11b-vision-preview")
 GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "openai/gpt-oss-120b")
 LLM_TIMEOUT_SECONDS = 60          # compare mode
 GATE_TIMEOUT_SECONDS = 12.0       # node 1
@@ -46,5 +45,5 @@ BUNDLE_TIMEOUT_SECONDS = 22.0     # consolidated nodes 2 + 4 + 5
 BUNDLE_MAX_TOKENS = 1100
 WEATHER_TIMEOUT_SECONDS = 5.0     # node 3
 
-PROVIDERS = ("gemini", "groq")
-ENV_KEY_NAMES = {"gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY"}
+PROVIDERS = ("groq",)
+ENV_KEY_NAMES = {"groq": "GROQ_API_KEY"}

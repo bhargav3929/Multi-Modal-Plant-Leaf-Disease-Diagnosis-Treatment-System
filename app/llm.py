@@ -1,4 +1,4 @@
-"""Multi-provider LLM access with automatic failover (Gemini primary, Groq fallback).
+"""LLM access via Groq only (vision model with fast fallback; text model for synthesis).
 
 Keys come from the browser-saved settings table first, then from environment / .env.
 All calls go through LangChain chat models so LangGraph nodes stay provider-agnostic.
@@ -53,15 +53,6 @@ def _redact(text: str) -> str:
 # --- model construction -------------------------------------------------------------
 def _build(provider: str, model: str, key: str, temperature: float, timeout: float,
            max_tokens: Optional[int], no_thinking: bool):
-    if provider == "gemini":
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        extra: Dict[str, Any] = {}
-        if max_tokens:
-            extra["max_output_tokens"] = max_tokens
-        if no_thinking:  # thinking tokens would eat the small output budget
-            extra["thinking_budget"] = 0
-        return ChatGoogleGenerativeAI(model=model, google_api_key=key, temperature=temperature,
-                                      timeout=timeout, max_retries=0, **extra)
     from langchain_groq import ChatGroq
     extra = {"max_tokens": max_tokens} if max_tokens else {}
     return ChatGroq(model=model, api_key=key, temperature=temperature, timeout=timeout, max_retries=0, **extra)
@@ -70,9 +61,6 @@ def _build(provider: str, model: str, key: str, temperature: float, timeout: flo
 def _candidates(vision: bool) -> List[Tuple[str, str, str]]:
     """Ordered (provider, model, key) attempts."""
     out: List[Tuple[str, str, str]] = []
-    gem = get_key("gemini")[0]
-    if gem:
-        out.append(("gemini", config.GEMINI_MODEL, gem))
     groq = get_key("groq")[0]
     if groq:
         if vision:
@@ -86,7 +74,7 @@ def _candidates(vision: bool) -> List[Tuple[str, str, str]]:
 
 
 def _content_to_text(content: Any) -> str:
-    """Gemini may return a list of content parts; flatten to plain text."""
+    """Models may return a list of content parts; flatten to plain text."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -148,7 +136,7 @@ def _retry_after(msg: str) -> Optional[float]:
 def _attempt(provider: str, model: str, key: str, system: str, user_text: str, schema: Type[T],
              images: Optional[List[str]], temperature: float, timeout: float, max_tokens: Optional[int]) -> Tuple[T, str]:
     """One provider/model attempt (raises on any failure)."""
-    no_thinking = provider == "gemini" and bool(max_tokens)
+    no_thinking = False
     for attempt in range(2):
         try:
             llm = _build(provider, model, key, temperature, timeout, max_tokens, no_thinking)
@@ -182,7 +170,7 @@ def invoke_json(system: str, user_text: str, schema: Type[T], images: Optional[L
     """
     cands = _candidates(vision=bool(images))
     if not cands:
-        raise LLMError("No AI provider key is configured. Click 'API Keys' and paste a free Gemini or Groq key.")
+        raise LLMError("No AI provider key is configured. Click 'API Keys' and paste a free Groq key.")
     timeout = timeout or config.LLM_TIMEOUT_SECONDS
     live = [c for c in cands if _healthy(c[0])] or cands   # if everything is cooling down, try anyway
     skipped = [c for c in cands if c not in live]

@@ -1,4 +1,4 @@
-"""Persistent SQLite sliding-window rate limiter (default: 5 requests / hour / IP).
+"""Persistent SQLite sliding-window rate limiter (default: 15 requests / hour / IP).
 
 Each consumed request is a row (ip, timestamp). A request is allowed when fewer than
 `limit` rows for that IP exist inside the last `window` seconds. Because state lives in

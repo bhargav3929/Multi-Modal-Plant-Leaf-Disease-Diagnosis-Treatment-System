@@ -59,7 +59,7 @@ def _prepare(upload: UploadFile):
 def _require_provider() -> None:
     if not llm.configured_providers():
         raise HTTPException(
-            503, "No AI provider key is configured yet. Click 'API Keys' and paste a free Gemini or Groq key.")
+            503, "No AI provider key is configured yet. Click 'API Keys' and paste a free Groq key.")
 
 
 def _ndjson(obj: dict) -> bytes:
@@ -89,7 +89,6 @@ def api_quota(request: Request):
 
 
 class KeysRequest(BaseModel):
-    gemini_api_key: Optional[str] = Field(default=None, max_length=300)
     groq_api_key: Optional[str] = Field(default=None, max_length=300)
 
 
@@ -98,7 +97,7 @@ def save_keys(body: KeysRequest, request: Request):
     if not (_is_loopback(request) or config.ALLOW_REMOTE_KEY_EDIT):
         raise HTTPException(403, "API keys can only be changed from the machine running the server.")
     saved = []
-    for provider, value in (("gemini", body.gemini_api_key), ("groq", body.groq_api_key)):
+    for provider, value in (("groq", body.groq_api_key),):
         value = (value or "").strip()
         if not value:
             continue
@@ -107,7 +106,7 @@ def save_keys(body: KeysRequest, request: Request):
         db.set_setting(f"{provider}_api_key", value)
         saved.append(provider)
     if not saved:
-        raise HTTPException(400, "Paste at least one API key.")
+        raise HTTPException(400, "Paste your Groq API key.")
     return {"saved": saved}
 
 

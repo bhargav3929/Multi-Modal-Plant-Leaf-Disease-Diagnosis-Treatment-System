@@ -5,7 +5,7 @@ A locally runnable full-stack web app that diagnoses plant-leaf disease from a p
 a dual-track **Organic vs. Chemical** treatment plan - with progression comparison, a
 scan-history archive and a printable PDF report.
 
-* Backend: Python 3.10+ · FastAPI · Uvicorn · LangGraph · LangChain (Gemini + Groq) · SQLite
+* Backend: Python 3.10+ · FastAPI · Uvicorn · LangGraph · LangChain (Groq) · SQLite
 * Frontend: plain HTML / CSS / JS served by FastAPI - **no Node.js, no npm, no build step, no GPU**
 * Runs on an 8 GB RAM laptop; all heavy lifting is done by free hosted AI APIs
 
@@ -22,10 +22,7 @@ scan-history archive and a printable PDF report.
    The script creates a virtual environment, installs `requirements.txt`, copies `.env.example` to `.env`,
    generates the sample images, starts the server and opens <http://127.0.0.1:8001>.
 3. Add a **free** AI key - either click **API Keys** in the app and paste it (no file editing), or put it in `.env`:
-   * Gemini (primary): <https://aistudio.google.com/apikey> → `GEMINI_API_KEY`
-   * Groq (fallback): <https://console.groq.com/keys> → `GROQ_API_KEY`
-
-   With both set, the app fails over automatically (Gemini → Groq) if a provider errors or is rate-limited.
+   * Groq: <https://console.groq.com/keys> → `GROQ_API_KEY` (the only AI provider; vision model with automatic fast fallback)
 
 Manual run: `pip install -r requirements.txt && python run.py`
 
@@ -84,13 +81,13 @@ Humidity blends current RH with the 48 h average; temperature is optimal at 18-2
 | **Compare Progress** (v1.1) | Day 1 baseline vs. follow-up → Improving / Stable / Worsening with infected-area estimates and visual evidence |
 | **Live timer + debug logs** | Ticking `0.0s` timer on the pipeline banner and a collapsible *Execution & Debug Logs* panel (per-node ms, provider/model, raw trace) |
 | **History + report** (v1.1) | SQLite archive with search and class filters; **Print / Save PDF** report view (browser print dialog → *Save as PDF*) |
-| **API Key Manager** | Paste a Gemini/Groq key in the browser; stored in local SQLite; only editable from localhost |
+| **API Key Manager** | Paste a Groq key in the browser; stored in local SQLite; only editable from localhost |
 
 ## Demo rate limiting
 
 `/api/analyze` and `/api/compare` share one **sliding-window limiter** stored in SQLite
-(table `rate_limit`): `RATE_LIMIT_PER_HOUR` (default **5**) requests per client IP per rolling hour. It survives restarts.
-The header pill shows e.g. `5/5 Free Demo Scans Left This Hour` with a countdown to the next free slot; over the limit the API
+(table `rate_limit`): `RATE_LIMIT_PER_HOUR` (default **15**) requests per client IP per rolling hour. It survives restarts.
+The header pill shows e.g. `15/15 Free Demo Scans Left This Hour` with a countdown to the next free slot; over the limit the API
 returns HTTP **429** with a friendly message and a `Retry-After` header. Invalid uploads are rejected *before* a slot is consumed.
 Set `TRUST_PROXY=1` only behind your own reverse proxy (otherwise `X-Forwarded-For` is ignored so it can't be spoofed).
 
@@ -115,7 +112,7 @@ around 100 KB. Node 1 is a short call (150 tokens, 12 s timeout); nodes 2, 4 and
 
 ## Configuration (`.env`)
 
-See `.env.example`. Key settings: `GEMINI_API_KEY`, `GROQ_API_KEY`, `RATE_LIMIT_PER_HOUR`, `HOST`, `PORT`, `MAX_UPLOAD_MB`, `DB_FILE`.
+See `.env.example`. Key settings: `GROQ_API_KEY`, `RATE_LIMIT_PER_HOUR`, `HOST`, `PORT`, `MAX_UPLOAD_MB`, `DB_FILE`.
 Groq retires preview models from time to time, so the vision model is configurable (`GROQ_VISION_MODEL`, with
 `GROQ_VISION_MODEL_FALLBACK` tried as a second option).
 
@@ -135,7 +132,7 @@ Interactive docs: <http://127.0.0.1:8001/docs>
 ## Project layout
 
 ```
-app/            config, db, ratelimit, imaging, llm (failover), schemas, prompts, weather, graph (LangGraph), samples, main (FastAPI)
+app/            config, db, ratelimit, imaging, llm (Groq), schemas, prompts, weather, graph (LangGraph), samples, main (FastAPI)
 static/         index.html, css/style.css, js/app.js, samples/ (downloaded on first run)
 run.py          server launcher        start.bat / start.sh   one-command startup
 ```
