@@ -96,3 +96,11 @@ Multi-Modal-Plant-Leaf-Disease-Diagnosis-Treatment-System/
 
 AI output is decision support only and can be wrong. Confirm with a qualified agronomist, follow pesticide labels, wear
 the specified PPE, and respect pre-harvest intervals and local rules. The app never gives brand-specific dosages.
+
+Run The Commands:
+
+Windows (PowerShell):
+python -m venv .venv; .\.venv\Scripts\python.exe -m pip install -r requirements.txt; .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+
+macOS / Linux (Terminal):
+python3 -m venv .venv && ./.venv/bin/python -m pip install -r requirements.txt && ./.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
