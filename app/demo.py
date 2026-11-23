@@ -107,6 +107,24 @@ def info(request: Request) -> Optional[dict]:
     return {"ticket_valid": True, "runs_left": left, "daily_cap_reached": _runs_today() >= config.DEMO_DAILY_CAP}
 
 
+def no_ticket(request: Request) -> bool:
+    """Demo visitor without a valid ticket: has no private history to show."""
+    return config.DEMO_MODE and read_ticket(request)[0] is None
+
+
+def quota(request: Request) -> Optional[dict]:
+    """Runs left on this visitor's ticket (demo only; None in the download version)."""
+    if not config.DEMO_MODE:
+        return None
+    payload, _ = read_ticket(request)
+    if not payload:
+        return None
+    limit = int(payload.get("runs", 0))
+    used = _runs_used(payload["tid"])
+    return {"limit": limit, "used": used, "remaining": max(0, limit - used),
+            "reset_in_seconds": max(0, int(payload.get("exp", 0) - time.time())), "window_seconds": 900}
+
+
 def owner_id(request: Request) -> str:
     """Who owns history/quota rows: the ticket id in demo mode, the client address otherwise."""
     if config.DEMO_MODE:

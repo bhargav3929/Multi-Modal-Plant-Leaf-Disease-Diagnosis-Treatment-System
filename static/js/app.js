@@ -93,13 +93,13 @@
     if (!q) return;
     const pill = $('#quotaPill');
     pill.hidden = false;
-    $('#quotaText').textContent = `${q.remaining}/${q.limit} Free Demo Scans Left This Hour`;
+    $('#quotaText').textContent = `${q.remaining}/${q.limit} Live Runs Left On This Ticket`;
     pill.classList.toggle('empty', q.remaining === 0);
     pill.classList.toggle('low', q.remaining > 0 && q.remaining <= Math.ceil(q.limit * 0.4));
     const resetEl = $('#quotaReset');
     if (state.resetAt) {
       const secs = Math.max(0, Math.ceil((state.resetAt - Date.now()) / 1000));
-      resetEl.textContent = `· next slot ${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+      resetEl.textContent = `· ticket expires ${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
       if (secs === 0) { state.resetAt = 0; refreshQuota(); }
     } else {
       resetEl.textContent = '';

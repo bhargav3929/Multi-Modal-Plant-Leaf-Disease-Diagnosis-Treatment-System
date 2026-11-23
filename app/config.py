@@ -46,10 +46,6 @@ DEMO_DAILY_CAP = max(1, _int("DEMO_DAILY_CAP", 200))
 DEMO_MAX_UPLOAD_MB = max(1, _int("DEMO_MAX_UPLOAD_MB", 3))
 UPLOAD_LIMIT_MB = DEMO_MAX_UPLOAD_MB if DEMO_MODE else MAX_UPLOAD_MB
 
-# Hourly scan allowance per visitor (demo only; the download version is unlimited)
-RATE_LIMIT_PER_HOUR = max(1, _int("RATE_LIMIT_PER_HOUR", 15))
-RATE_WINDOW_SECONDS = 3600
-
 # --- AI (Groq only) -------------------------------------------------------------
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b")

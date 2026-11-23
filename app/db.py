@@ -29,13 +29,6 @@ CREATE TABLE IF NOT EXISTS scans (
 );
 CREATE INDEX IF NOT EXISTS idx_scans_ip_created ON scans (ip, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS rate_limit (
-    id  INTEGER PRIMARY KEY AUTOINCREMENT,
-    ip  TEXT NOT NULL,
-    ts  REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_rate_ip_ts ON rate_limit (ip, ts);
-
 CREATE TABLE IF NOT EXISTS demo_runs (
     id  INTEGER PRIMARY KEY AUTOINCREMENT,
     tid TEXT NOT NULL,

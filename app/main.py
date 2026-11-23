@@ -1,4 +1,5 @@
 """FastAPI application: REST API + static frontend for the plant-pathology console."""
+import asyncio
 import json
 import logging
 import time
@@ -10,7 +11,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, db, demo, errors, graph, imaging, llm, prompts, ratelimit, samples, schemas
+from . import config, db, demo, errors, graph, imaging, llm, prompts, samples, schemas
 from .errors import ApiError
 
 log = logging.getLogger("agri")
@@ -21,11 +22,24 @@ APP_TITLE = config.PROJECT_NAME
 async def lifespan(_: FastAPI):
     db.init_db()
     samples.ensure_samples()
+    task = None
     if config.DEMO_MODE:
         if not config.DEMO_TICKET_SECRET:
             log.warning("DEMO_MODE is on but DEMO_TICKET_SECRET is empty: every ticket will be rejected.")
-        demo.cleanup()
+        task = asyncio.create_task(_cleanup_loop())
     yield
+    if task:
+        task.cancel()
+
+
+async def _cleanup_loop() -> None:
+    """Delete demo history and run rows older than 24 h, now and then every hour."""
+    while True:
+        try:
+            await asyncio.to_thread(demo.cleanup)
+        except Exception:  # noqa: BLE001 - cleanup must never kill the server
+            log.exception("demo cleanup failed")
+        await asyncio.sleep(3600)
 
 
 app = FastAPI(title=APP_TITLE, version=config.VERSION, lifespan=lifespan)
@@ -96,13 +110,13 @@ def api_info(request: Request):
         "ai": {"provider": "groq", "ready": bool(key), "model": config.GROQ_VISION_MODEL},
         "limits": {"max_upload_mb": config.UPLOAD_LIMIT_MB},
         "demo": demo.info(request),
-        "quota": ratelimit.status(owner(request)),
+        "quota": demo.quota(request),
     }
 
 
 @app.get("/api/quota")
 def api_quota(request: Request):
-    return ratelimit.status(owner(request))
+    return demo.quota(request)
 
 
 @app.get("/api/samples")
@@ -157,14 +171,13 @@ def analyze(request: Request, file: UploadFile = File(...), crop: str = Form("")
     image_b64, thumb = _prepare(file)      # validate first so bad uploads never burn a run
     ticket = demo.require_run(request)
     _require_provider()
-    ratelimit.check(who)
     t0 = time.perf_counter()
 
     init = {"image_b64": image_b64, "thumb": thumb, "client_ip": who, "crop_hint": crop, "city": city, "trace": []}
 
     def event_stream():
         state = dict(init)
-        yield _ndjson({"event": "start", "quota": ratelimit.status(who), "payload_kb": round(len(image_b64) * 0.75 / 1024, 1)})
+        yield _ndjson({"event": "start", "quota": demo.quota(request), "payload_kb": round(len(image_b64) * 0.75 / 1024, 1)})
         try:
             for chunk in graph.PIPELINE.stream(init, stream_mode="updates"):
                 for node, update in chunk.items():
@@ -181,15 +194,15 @@ def analyze(request: Request, file: UploadFile = File(...), crop: str = Form("")
             if scan_id:  # re-save so the stored record includes node 5's own latency
                 db.update_scan_record(scan_id, result)
             demo.record_run(ticket)            # count a run only now that it worked
-            quota = ratelimit.record(who)
+            quota = demo.quota(request)
             result.update(scan_id=scan_id, thumb=thumb, created_at=time.time(),
                           elapsed_ms=round((time.perf_counter() - t0) * 1000), payload_kb=round(len(image_b64) * 0.75 / 1024, 1))
             yield _ndjson({"event": "result", "result": result, "quota": quota})
         except llm.LLMError as exc:
-            yield _stream_error(exc.code, str(exc), ratelimit.status(who))
+            yield _stream_error(exc.code, str(exc), demo.quota(request))
         except Exception:  # noqa: BLE001 - surface anything unexpected to the UI, politely
             log.exception("analysis failed")
-            yield _stream_error("AI_FAILED", llm.MESSAGES["AI_FAILED"], ratelimit.status(who))
+            yield _stream_error("AI_FAILED", llm.MESSAGES["AI_FAILED"], demo.quota(request))
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
@@ -199,12 +212,10 @@ def analyze(request: Request, file: UploadFile = File(...), crop: str = Form("")
 @app.post("/api/compare")
 def compare(request: Request, baseline: UploadFile = File(...), followup: UploadFile = File(...),
             crop: str = Form("")):
-    who = owner(request)
     b64_a, thumb_a = _prepare(baseline)
     b64_b, thumb_b = _prepare(followup)
     ticket = demo.require_run(request)
     _require_provider()
-    ratelimit.check(who)
     crop = crop.strip()[:60]
     text = "Compare IMAGE 1 (Day 1 Baseline) with IMAGE 2 (Follow-Up Scan)." + (f" Crop: {crop}." if crop else "")
     try:
@@ -212,7 +223,7 @@ def compare(request: Request, baseline: UploadFile = File(...), followup: Upload
     except llm.LLMError as exc:
         raise ApiError(exc.code, str(exc))
     demo.record_run(ticket)
-    quota = ratelimit.record(who)
+    quota = demo.quota(request)
     data = comp.model_dump()
     if not (data["baseline"]["is_valid_plant_leaf"] and data["followup"]["is_valid_plant_leaf"]):
         data["trend"] = "Not Comparable"
@@ -224,12 +235,14 @@ def compare(request: Request, baseline: UploadFile = File(...), followup: Upload
 # --------------------------------------------------------------------------- history
 @app.get("/api/history")
 def history(request: Request, q: str = Query("", max_length=80), pathogen_class: str = Query("", max_length=20)):
+    if demo.no_ticket(request):
+        return []
     return db.list_scans(owner(request), q.strip(), pathogen_class.strip())
 
 
 @app.get("/api/history/{scan_id}")
 def history_item(scan_id: int, request: Request):
-    scan = db.get_scan(owner(request), scan_id)
+    scan = None if demo.no_ticket(request) else db.get_scan(owner(request), scan_id)
     if not scan:
         raise ApiError("NOT_FOUND", "Scan not found.")
     return scan
@@ -237,7 +250,7 @@ def history_item(scan_id: int, request: Request):
 
 @app.delete("/api/history/{scan_id}")
 def history_delete(scan_id: int, request: Request):
-    if not db.delete_scan(owner(request), scan_id):
+    if demo.no_ticket(request) or not db.delete_scan(owner(request), scan_id):
         raise ApiError("NOT_FOUND", "Scan not found.")
     return {"deleted": scan_id}
 

@@ -58,7 +58,9 @@ still fails you get a plain message, not an error dump.
 Multi-Modal-Plant-Leaf-Disease-Diagnosis-Treatment-System/
 ├── start.bat / start.sh     one-command start (Windows / macOS / Linux)
 ├── run.py                   alternative launcher: python run.py
-├── requirements.txt         pinned-range Python requirements
+├── scripts/record_samples.py  re-records the saved sample results
+├── VIVA_NOTES.md            talking points for your viva
+├── requirements.txt         pinned Python requirements
 ├── .env.example             settings template (copied to .env on first run)
 ├── app/
 │   ├── main.py              FastAPI routes
@@ -70,7 +72,6 @@ Multi-Modal-Plant-Leaf-Disease-Diagnosis-Treatment-System/
 │   ├── imaging.py           image checks and resizing
 │   ├── samples.py           sample photos and their saved results
 │   ├── db.py                SQLite: history and saved key
-│   ├── ratelimit.py         fair-use limits
 │   ├── demo.py              access checks for the hosted preview
 │   ├── errors.py            one error format for every route
 │   └── config.py            settings read from .env
@@ -96,11 +97,3 @@ Multi-Modal-Plant-Leaf-Disease-Diagnosis-Treatment-System/
 
 AI output is decision support only and can be wrong. Confirm with a qualified agronomist, follow pesticide labels, wear
 the specified PPE, and respect pre-harvest intervals and local rules. The app never gives brand-specific dosages.
-
-Run The Commands:
-
-Windows (PowerShell):
-python -m venv .venv; .\.venv\Scripts\python.exe -m pip install -r requirements.txt; .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
-
-macOS / Linux (Terminal):
-python3 -m venv .venv && ./.venv/bin/python -m pip install -r requirements.txt && ./.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001

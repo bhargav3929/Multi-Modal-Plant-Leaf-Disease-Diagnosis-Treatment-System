@@ -19,8 +19,7 @@ from . import config
 log = logging.getLogger("agri")
 
 SIZE = 768
-USER_AGENT = ("PlantLeafDiseaseLangGraph/1.0 (https://github.com/plant-leaf-disease-langgraph; "
-              "educational demo) httpx")
+USER_AGENT = "PlantLeafDiseaseLangGraph/1.0 (educational project) httpx"
 COMMONS = "https://commons.wikimedia.org/wiki/Special:FilePath/{name}?width=1280"
 
 SAMPLES = [
