@@ -161,7 +161,8 @@ class Prevention(BaseModel):
 
 
 class Bundle(BaseModel):
-    """One LLM call that covers nodes 2 (diagnosis), 4 (treatment) and 5 (prevention)."""
+    """One LLM call that covers nodes 1 (gatekeeper), 2 (diagnosis), 4 (treatment) and 5 (prevention)."""
+    gatekeeper: Gatekeeper = Field(default_factory=lambda: Gatekeeper(is_real_leaf=True, category="leaf_photo"))
     diagnosis: Diagnosis = Field(default_factory=Diagnosis)
     treatment: Treatment = Field(default_factory=Treatment)
     prevention: Prevention = Field(default_factory=Prevention)

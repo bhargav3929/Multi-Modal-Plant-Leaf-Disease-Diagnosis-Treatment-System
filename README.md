@@ -42,15 +42,24 @@ Click **API Keys** in the app and paste your key (it starts with `gsk_`), or ope
 
 Your photo goes through five steps (a LangGraph pipeline in `app/graph.py`):
 
-1. **Specimen Gatekeeper** checks the photo really shows a plant leaf. If not, it stops and tells you why.
-2. **Pathogen Vision** asks a Groq vision model for the disease, pathogen type, confidence and severity. The same
-   AI call also drafts the treatment and prevention plans.
+1. **Specimen Gatekeeper** sends the photo to a Groq vision model **once**. That single AI call checks the photo
+   really shows a plant leaf (if not, the pipeline stops and tells you why) and, for a real leaf, also returns the
+   diagnosis and the treatment and prevention plans.
+2. **Pathogen Vision** publishes the disease, pathogen type, confidence and severity from that answer.
 3. **Weather Telemetry** looks up your city on Open-Meteo (free, no key) and scores how likely the disease is to spread.
 4. **Treatment Protocol** joins the diagnosis with the weather and publishes the organic and chemical plans.
 5. **Preventive Advisor** adds crop rotation, resistant varieties and soil advice, then saves the scan to a local SQLite file.
 
 Every AI call (`app/llm.py`) has a timeout, retries when Groq is busy, and switches to a backup model if needed. If it
 still fails you get a plain message, not an error dump.
+
+**Built for the free Groq key.** The free plan allows a fixed number of AI tokens per minute, and every photo costs
+about the same whatever its size. So the app:
+
+- sends each photo to the AI only once per scan (about 2 new photos a minute on a free key; more just wait a few seconds);
+- shows a **saved result** instantly when you analyse the exact same photo again (no AI call). Press
+  **Run again with AI** to ask the AI afresh;
+- when the minute's limit is used up, shows *"continuing in Ns"* and carries on by itself instead of failing.
 
 ## Project structure
 
@@ -83,8 +92,10 @@ Multi-Modal-Plant-Leaf-Disease-Diagnosis-Treatment-System/
 
 - **Port already in use.** Another program is using port 8001. Close it, or change `PORT=` in `.env` and run the start
   script again.
-- **"The AI service is busy".** Groq's free tier is overloaded. Wait a minute and try again. The app already retried
-  and tried a backup model.
+- **"Free AI limit reached for this minute - continuing in Ns".** Normal on a free Groq key when you run many new
+  photos quickly. Just wait; the scan continues by itself. Repeating a photo you already ran is instant.
+- **"The AI service is busy".** Groq itself is overloaded. Wait a minute and try again. The app already waited,
+  retried and tried a backup model.
 - **"Your Groq key was rejected".** The key is wrong or was deleted. Click **API Keys** and paste a fresh key from
   <https://console.groq.com/keys>.
 - **Python not found.** Install Python 3.10+ from <https://www.python.org/downloads/>, tick *Add python.exe to PATH*,

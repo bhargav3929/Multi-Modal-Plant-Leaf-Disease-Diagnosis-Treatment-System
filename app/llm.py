@@ -3,14 +3,20 @@
 Key order: key saved in the app (download version only), then GROQ_API_KEY from env / .env.
 Every call has a timeout, retries with backoff on busy/transient errors, falls back to the
 second model, and turns failures into plain-English LLMError(code=...) messages.
+
+Groq's free tier limits input tokens per minute, and a photo costs a fixed ~1,300 tokens whatever its size.
+So when Groq says "try again in Xs" we wait (telling the UI through WAIT_HOOK) instead of failing, and
+invoke_json_cached() reuses the saved answer when the exact same photo and question come again.
 """
+import contextvars
+import hashlib
 import json
 import logging
 import os
 import random
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
@@ -26,6 +32,12 @@ MESSAGES = {
     "AI_BUSY": "The AI service is busy right now. Wait a minute and try again.",
     "AI_FAILED": "The AI couldn't process this input.",
 }
+
+
+RATE_LIMIT_WAIT_BUDGET_S = 60     # total time we are willing to wait for Groq's per-minute limit to reset
+
+# Set by the streaming route: called with the number of seconds we are about to wait, so the UI can count down.
+WAIT_HOOK: contextvars.ContextVar[Optional[Callable[[float], None]]] = contextvars.ContextVar("WAIT_HOOK", default=None)
 
 
 class LLMError(RuntimeError):
@@ -143,28 +155,42 @@ def _attempt(model: str, key: str, system: str, user_text: str, schema: Type[T],
     return schema.model_validate(extract_json(_content_to_text(reply.content)))
 
 
+def _wait(seconds: float) -> None:
+    hook = WAIT_HOOK.get()
+    if hook and seconds >= 1:
+        try:
+            hook(seconds)
+        except Exception:  # noqa: BLE001 - a UI notice must never break the AI call
+            pass
+    time.sleep(seconds)
+
+
 def invoke_json(system: str, user_text: str, schema: Type[T], images: Optional[List[str]] = None,
                 temperature: float = 0.2, timeout: Optional[float] = None,
                 max_tokens: Optional[int] = None) -> Tuple[T, str]:
     """Run a prompt (optionally with images); return (validated_model, 'groq/<model>').
 
-    Up to 3 attempts per model (backoff 1 s, 2 s, 4 s + jitter; a 429 'try again in Xs' with X<=20 waits X),
-    then the fallback model. 401 stops at once. Invalid JSON output is retried once.
+    Busy errors (429/5xx/timeouts) are retried with backoff (1 s, 2 s, 4 s + jitter). A 429 that says
+    'try again in Xs' waits X seconds instead, for up to RATE_LIMIT_WAIT_BUDGET_S in total, because the
+    per-minute limit always resets. Then the fallback model. 401 stops at once. Invalid JSON is retried once.
     """
     key = get_key("groq")[0]
     if not key:
         raise LLMError("AI_NOT_CONFIGURED")
     timeout = timeout or config.LLM_TIMEOUT_SECONDS
     busy = False
+    waited = 0.0
     for model in _models(vision=bool(images)):
         bad_output = 0
-        for attempt in range(3):
+        attempt = 0
+        while True:
             try:
                 return _attempt(model, key, system, user_text, schema, images, temperature, timeout, max_tokens), f"groq/{model}"
             except Exception as exc:  # noqa: BLE001 - classified below
                 status = _status_of(exc)
                 name = type(exc).__name__.lower()
                 log.warning("groq %s attempt %d failed: %s %s", model, attempt + 1, type(exc).__name__, _redact(str(exc)))
+                attempt += 1
                 if status == 401:
                     raise LLMError("AI_KEY_INVALID")
                 if isinstance(exc, (ValueError, json.JSONDecodeError)) or "validation" in name:
@@ -178,8 +204,40 @@ def invoke_json(system: str, user_text: str, schema: Type[T], images: Optional[L
                 if not transient:
                     break
                 busy = True
-                if attempt == 2:
-                    break
                 wait_s = _retry_after(str(exc)) if status == 429 else None
-                time.sleep(wait_s + 0.3 if wait_s is not None and wait_s <= 20 else (2 ** attempt) + random.random() * 0.5)
+                if wait_s is not None and waited + wait_s <= RATE_LIMIT_WAIT_BUDGET_S:
+                    wait_s += 0.5      # per-minute limit: it will reset, so wait for it
+                elif attempt < 3:
+                    wait_s = (2 ** (attempt - 1)) + random.random() * 0.5
+                else:
+                    break
+                waited += wait_s
+                _wait(wait_s)
     raise LLMError("AI_BUSY" if busy else "AI_FAILED")
+
+
+def _cache_key(system: str, user_text: str, schema: Type[BaseModel], images: Optional[List[str]]) -> str:
+    h = hashlib.sha256()
+    for part in (schema.__name__, system, user_text, *(images or [])):
+        h.update(part.encode("utf-8"))
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def invoke_json_cached(system: str, user_text: str, schema: Type[T], images: Optional[List[str]] = None,
+                       fresh: bool = False, **kwargs: Any) -> Tuple[T, str, bool]:
+    """Like invoke_json, but the same photo + same question reuses the saved answer (no AI call, no tokens).
+
+    Returns (validated_model, provider, reused). fresh=True always asks the AI and refreshes the saved answer.
+    """
+    key = _cache_key(system, user_text, schema, images)
+    if not fresh:
+        saved = db.get_ai_answer(key)
+        if saved:
+            try:
+                return schema.model_validate(saved["data"]), saved["provider"], True
+            except Exception:  # noqa: BLE001 - an old/invalid saved answer is simply ignored
+                pass
+    out, provider = invoke_json(system, user_text, schema, images=images, **kwargs)
+    db.save_ai_answer(key, provider, out.model_dump())
+    return out, provider, False

@@ -1,4 +1,4 @@
-"""SQLite persistence: scan history, UI-saved API keys and the rate-limit ledger.
+"""SQLite persistence: scan history, UI-saved API keys, the rate-limit ledger and saved AI answers.
 
 Every call opens a short-lived connection (cheap for SQLite) so the module is safe
 to use from FastAPI's worker threads and from LangGraph nodes.
@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS demo_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_demo_runs_tid ON demo_runs (tid);
 
+CREATE TABLE IF NOT EXISTS ai_cache (
+    key        TEXT PRIMARY KEY,
+    provider   TEXT NOT NULL,
+    data_json  TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -59,6 +66,28 @@ def connect():
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+
+
+# --- saved AI answers (same photo + same question = same answer, no AI call) -----
+AI_CACHE_MAX_ROWS = 300
+
+
+def get_ai_answer(key: str) -> Optional[Dict[str, Any]]:
+    with connect() as conn:
+        row = conn.execute("SELECT provider, data_json FROM ai_cache WHERE key=?", (key,)).fetchone()
+    return {"provider": row["provider"], "data": json.loads(row["data_json"])} if row else None
+
+
+def save_ai_answer(key: str, provider: str, data: Dict[str, Any]) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO ai_cache(key, provider, data_json, created_at) VALUES(?, ?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET provider=excluded.provider, data_json=excluded.data_json, "
+            "created_at=excluded.created_at",
+            (key, provider, json.dumps(data), time.time()),
+        )
+        conn.execute("DELETE FROM ai_cache WHERE key NOT IN "
+                     "(SELECT key FROM ai_cache ORDER BY created_at DESC LIMIT ?)", (AI_CACHE_MAX_ROWS,))
 
 
 # --- settings (UI-saved API keys) ---------------------------------------------

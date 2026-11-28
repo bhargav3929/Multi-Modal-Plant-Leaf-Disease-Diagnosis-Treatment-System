@@ -30,7 +30,7 @@ def main() -> int:
         for attempt in range(3):   # free-tier tokens-per-minute limits: wait a minute and retry
             try:
                 state = graph.PIPELINE.invoke({"image_b64": image_b64, "thumb": thumb, "client_ip": "sample",
-                                               "crop_hint": "", "city": "", "trace": []})
+                                               "crop_hint": "", "city": "", "fresh": True, "trace": []})
                 break
             except llm.LLMError as exc:
                 print("  AI error:", exc, "- waiting 65 s")

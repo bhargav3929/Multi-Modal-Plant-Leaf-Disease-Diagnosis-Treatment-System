@@ -1,14 +1,17 @@
-"""The 5-node stateful LangGraph pipeline (optimised for a 6-18 s end-to-end run).
+"""The 5-node stateful LangGraph pipeline.
 
     START -> specimen_gatekeeper_node --(real leaf)--+--> pathogen_vision_node --+--> treatment_protocol_node
-                       |                             |     (ONE consolidated      |            |
-                  (not a leaf)                       |      LLM call: dx +        |    preventive_advisor_node -> END
-                       v                             |      treatment + prev.)    |
-                      END                            +--> weather_telemetry_node -+
-                                                           (Open-Meteo, concurrent)
+               (the ONE vision call:     |           |                          |            |
+                gate + dx + treatment    |           +--> weather_telemetry_node -+    preventive_advisor_node -> END
+                + prevention)       (not a leaf)           (Open-Meteo)
+                                         v
+                                        END
 
-All five nodes stay visible in the UI. Node 1 is its own short call; nodes 2/4/5 share one structured
-JSON call (node 2 makes it, nodes 4/5 publish their slices and persist); node 3 runs in parallel with it.
+All five nodes stay visible in the UI, but the photo is sent to the AI only once per scan: node 1 makes one
+structured JSON call that answers the gatekeeper question and, for a real leaf, the diagnosis, treatment and
+prevention too. Nodes 2/4/5 publish their slices of that answer; node 3 runs in parallel with node 2.
+Groq's free tier limits input tokens per minute and each photo costs a fixed ~1,300 tokens, so one call per scan
+roughly doubles how many scans a student can run in a minute. A repeated photo reuses its saved answer (llm.py).
 Every node is wrapped by `@traced`, which records latency/status/provider into the shared state.
 """
 import functools
@@ -20,7 +23,7 @@ from typing import Annotated, Any, Callable, Dict, List
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
-from . import config, db, imaging, llm, prompts, schemas, weather
+from . import config, db, llm, prompts, schemas, weather
 
 GATEKEEPER_NODE = "specimen_gatekeeper_node"
 VISION_NODE = "pathogen_vision_node"
@@ -38,6 +41,7 @@ class PathologyState(TypedDict, total=False):
     client_ip: str
     crop_hint: str
     city: str
+    fresh: bool                   # True = ignore a saved answer for this photo and ask the AI again
     # node outputs
     gatekeeper: Dict[str, Any]
     diagnosis: Dict[str, Any]
@@ -48,6 +52,7 @@ class PathologyState(TypedDict, total=False):
     prevention: Dict[str, Any]
     # control / bookkeeping
     halted: bool
+    reused: bool                  # True = the AI answer came from an earlier scan of this exact photo
     warning: str
     scan_id: int
     provider: str
@@ -78,20 +83,29 @@ def traced(node_id: str, label: str) -> Callable:
 # --------------------------------------------------------------------------- nodes
 @traced(GATEKEEPER_NODE, "Specimen Gatekeeper")
 def specimen_gatekeeper_node(state: PathologyState) -> Dict[str, Any]:
-    """Node 1 - short vision check. Passes every real leaf photo; halts only for non-plants / illustrations."""
-    gate, provider = llm.invoke_json(prompts.GATEKEEPER, "Inspect this image.", schemas.Gatekeeper,
-                                     images=[imaging.shrink_b64(state["image_b64"])], temperature=0.0,
-                                     timeout=config.GATE_TIMEOUT_SECONDS, max_tokens=config.GATE_MAX_TOKENS)
-    data = gate.model_dump()
+    """Node 1 - the single vision call. Halts for non-plants / illustrations; otherwise keeps the full answer."""
+    hint = (state.get("crop_hint") or "").strip()
+    text = "Check the image, then diagnose this leaf and write the treatment and prevention plans." + (
+        f" The grower says the crop is: {hint}." if hint else "")
+    out, provider, reused = llm.invoke_json_cached(prompts.BUNDLE, text, schemas.Bundle, images=[state["image_b64"]],
+                                                   fresh=bool(state.get("fresh")), timeout=config.BUNDLE_TIMEOUT_SECONDS,
+                                                   max_tokens=config.BUNDLE_MAX_TOKENS)
+    data = out.gatekeeper.model_dump()
+    via = provider + (" (saved)" if reused else "")
     if not data["is_real_leaf"]:
         warning = data["user_message"] or (
             "This doesn't look like a real photo of a plant leaf. Please upload a camera photo of a leaf "
             "(good light, close-up).")
-        return {"gatekeeper": data, "halted": True, "warning": warning, "provider": provider,
+        return {"gatekeeper": data, "halted": True, "reused": reused, "warning": warning, "provider": provider,
                 "_meta": {"status": "halted", "detail": f"Rejected ({data['category'] or 'not a leaf'}) - pipeline stopped",
-                          "provider": provider}}
-    return {"gatekeeper": data, "halted": False, "provider": provider,
-            "_meta": {"status": "ok", "detail": "Real leaf photo", "provider": provider}}
+                          "provider": via}}
+    d = out.diagnosis.model_dump()
+    if hint and d["crop"].lower() in ("", "unknown"):
+        d["crop"] = hint
+    return {"gatekeeper": data, "halted": False, "reused": reused, "provider": provider, "diagnosis": d,
+            "bundle": {"treatment": out.treatment.model_dump(), "prevention": out.prevention.model_dump()},
+            "_meta": {"status": "ok", "provider": via,
+                      "detail": "Real leaf photo" + (" - answer reused from an earlier scan of this photo" if reused else "")}}
 
 
 def route_after_gatekeeper(state: PathologyState):
@@ -101,18 +115,10 @@ def route_after_gatekeeper(state: PathologyState):
 
 @traced(VISION_NODE, "Pathogen Vision")
 def pathogen_vision_node(state: PathologyState) -> Dict[str, Any]:
-    """Node 2 - ONE consolidated structured call: diagnosis (this node) + treatment + prevention (nodes 4, 5)."""
-    hint = (state.get("crop_hint") or "").strip()
-    text = "Diagnose this leaf and write the treatment and prevention plans." + (
-        f" The grower says the crop is: {hint}." if hint else "")
-    out, provider = llm.invoke_json(prompts.BUNDLE, text, schemas.Bundle, images=[state["image_b64"]],
-                                    timeout=config.BUNDLE_TIMEOUT_SECONDS, max_tokens=config.BUNDLE_MAX_TOKENS)
-    d = out.diagnosis.model_dump()
-    if hint and d["crop"].lower() in ("", "unknown"):
-        d["crop"] = hint
-    return {"diagnosis": d, "provider": provider,
-            "bundle": {"treatment": out.treatment.model_dump(), "prevention": out.prevention.model_dump()},
-            "_meta": {"status": "ok", "provider": provider, "detail": f"{d['disease']} - {d['confidence']:.0f}%"}}
+    """Node 2 - publishes the diagnosis that node 1's vision call returned."""
+    d = state["diagnosis"]
+    return {"_meta": {"status": "ok", "provider": state.get("provider", ""),
+                      "detail": f"{d['disease']} - {d['confidence']:.0f}%"}}
 
 
 @traced(WEATHER_NODE, "Weather Telemetry")
@@ -160,6 +166,7 @@ def build_result(state: Dict[str, Any]) -> Dict[str, Any]:
         "city": state.get("city", ""),
         "provider": state.get("provider", ""),
         "halted": bool(state.get("halted")),
+        "reused": bool(state.get("reused")),
         "warning": state.get("warning", ""),
         "gatekeeper": state.get("gatekeeper"),
         "diagnosis": state.get("diagnosis"),

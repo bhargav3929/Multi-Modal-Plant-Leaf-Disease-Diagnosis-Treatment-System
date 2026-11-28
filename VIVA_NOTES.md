@@ -7,7 +7,8 @@ model, adds live Open-Meteo weather risk, and returns organic and chemical treat
 ## Architecture in 60 seconds
 - **Backend:** Python + FastAPI (`app/main.py`), SQLite for history and the saved key (`app/db.py`).
 - **Pipeline:** LangGraph `StateGraph` (`app/graph.py`) with shared `PathologyState`, one conditional edge
-  (stop if not a leaf) and a parallel branch (diagnosis and weather run together, then join).
+  (stop if not a leaf) and a parallel branch (diagnosis and weather run together, then join). The photo goes to the
+  AI once, in node 1.
 - **AI:** Groq only (`app/llm.py`). Vision model for images, text model fallback. Retries with backoff on 429/5xx/timeouts,
   then a fallback model, then a plain-English error. Failed runs never count against a limit.
 - **Frontend:** plain HTML/CSS/JS in `static/`, streaming progress from `POST /api/analyze` (newline-delimited JSON).
@@ -15,7 +16,14 @@ model, adds live Open-Meteo weather risk, and returns organic and chemical treat
 
 ## Likely questions
 - **Why LangGraph?** Explicit state, a conditional stop, a parallel fan-out/join, and per-node timing for the UI.
-- **Why a gatekeeper node?** Stops wasted AI calls and wrong diagnoses on non-leaf photos.
+- **Why a gatekeeper node?** Stops wrong diagnoses on non-leaf photos: the pipeline halts at node 1.
+- **Why only one AI call per scan?** Groq's free tier limits input tokens per minute and each photo costs a fixed
+  ~1,300 tokens. Asking the gatekeeper question and the diagnosis in the same call sends the photo once, which about
+  doubles the scans per minute. Nodes 2, 4 and 5 publish their parts of that one answer.
+- **What happens if I analyse the same photo twice?** The answer is saved under a SHA-256 hash of the photo and the
+  question (`ai_cache` table), so it comes back instantly with a "Saved result" note; **Run again with AI** forces a new call.
+- **What if the per-minute limit is hit?** Groq says how long to wait; the server waits (up to 60 s in total), streams
+  a countdown to the page, then continues.
 - **How is weather risk computed?** Humidity (0-40) + temperature (0-25) + 48 h rain (0-35), times a weight per pathogen class.
 - **How is output kept reliable?** Replies are requested as JSON, parsed defensively, validated by Pydantic (`app/schemas.py`),
   confidence clamped to 0-100.

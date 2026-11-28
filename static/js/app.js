@@ -321,7 +321,8 @@
     if (buf.trim()) onEvent(JSON.parse(buf));
   }
 
-  async function runAnalyze() {
+  /** fresh=true asks the AI again even if this exact photo was analysed before. */
+  async function runAnalyze(fresh = false) {
     if (state.busy || !single.file) return;
     state.busy = true;
     const btn = $('#btnAnalyze');
@@ -341,12 +342,16 @@
       fd.append('file', small);
       fd.append('crop', $('#cropInput').value);
       fd.append('city', $('#cityInput').value);
+      fd.append('fresh', fresh ? 'true' : 'false');
       setPipe(NODES[0].id, 'running');
 
       await streamAnalyze(fd, (ev) => {
         if (ev.event === 'start') {
           setQuota(ev.quota); logLine(`server accepted upload (${ev.payload_kb} KB to the AI)`);
+        } else if (ev.event === 'waiting') {
+          waitCountdown(ev.seconds);
         } else if (ev.event === 'node') {
+          clearWait();
           const t = ev.trace;
           const cls = t.status === 'skipped' ? 'skipped' : t.status === 'halted' ? 'halted' : 'done';
           finish(ev.node, cls, t);
@@ -361,6 +366,7 @@
             setPipe(NODES[4].id, 'running');
           }
         } else if (ev.event === 'result') {
+          clearWait();
           finished = true; setQuota(ev.quota);
           logLine(`done - server ${ev.result.elapsed_ms} ms`);
           stopTimer(ev.result.halted ? 'Stopped - not a real leaf photo' : 'Completed', false);
@@ -369,6 +375,7 @@
           renderDebug(ev.result.trace, { elapsed: ev.result.elapsed_ms, kb: ev.result.payload_kb });
           if (ev.result.halted) toast('That image is not a real leaf photo - see the warning.', 'error');
         } else if (ev.event === 'error') {
+          clearWait();
           finished = true; setQuota(ev.quota); logLine('error: ' + ev.message);
           stopTimer('Failed', true); showError('Analysis failed', ev.message); renderDebug([], { kb });
           if (ev.code === 'AI_NOT_CONFIGURED' && state.mode === 'local') openPanel('keysModal');
@@ -384,10 +391,34 @@
       else showError('Could not start analysis', err.message);
       renderDebug([], { kb });
     } finally {
+      clearWait();
       state.busy = false;
       btn.textContent = 'Run Diagnosis Pipeline';
       btn.disabled = !single.file;
     }
+  }
+
+  // Groq's free tier allows a fixed number of tokens per minute. When it is used up the server waits for the
+  // reset instead of failing, and tells us how long; show that as a countdown so nobody thinks it froze.
+  let waitTimer = null;
+  function waitCountdown(seconds) {
+    clearWait();
+    let left = Math.max(1, Math.round(seconds));
+    logLine(`Groq free-tier limit for this minute reached - waiting ${left}s, then continuing`);
+    const paint = () => { $('#runState').textContent = `Free AI limit reached for this minute - continuing in ${left}s…`; };
+    paint();
+    waitTimer = setInterval(() => { left = Math.max(0, left - 1); paint(); }, 1000);
+  }
+  function clearWait() {
+    if (!waitTimer) return;
+    clearInterval(waitTimer); waitTimer = null;
+    if (state.busy) $('#runState').textContent = 'Pipeline running…';
+  }
+
+  function reusedNote(what) {
+    return `<div class="reused-note fade"><p><b>Saved result.</b> This exact ${what} was analysed before, so the earlier
+      AI answer is shown instantly (no AI call used).</p>
+      <button class="btn ghost" type="button" data-act="fresh">Run again with AI</button></div>`;
   }
 
   function showError(title, msg) {
@@ -473,7 +504,7 @@
     }
     const d = r.diagnosis, t = r.treatment, p = r.prevention;
     const totalMs = (r.trace || []).reduce((a, x) => a + (x.ms || 0), 0);
-    pane.innerHTML = `
+    pane.innerHTML = `${r.reused ? reusedNote('photo') : ''}
       <div class="card fade">
         <div class="dx-head">
           <div>
@@ -515,7 +546,7 @@
   }
 
   // ======================================================================= compare mode
-  async function runCompare() {
+  async function runCompare(fresh = false) {
     if (state.cmpBusy || !base.file || !follow.file) return;
     state.cmpBusy = true;
     const btn = $('#btnCompare');
@@ -523,7 +554,7 @@
     const out = $('#compareResult');
     out.innerHTML = `<div class="empty"><h3>Comparing scans…</h3><p>The vision model is measuring lesion spread between both photos.</p></div>`;
     const fd = new FormData();
-    fd.append('baseline', await downscale(base.file)); fd.append('followup', await downscale(follow.file)); fd.append('crop', $('#cmpCrop').value);
+    fd.append('baseline', await downscale(base.file)); fd.append('followup', await downscale(follow.file)); fd.append('crop', $('#cmpCrop').value); fd.append('fresh', fresh ? 'true' : 'false');
     try {
       const res = await getJSON('api/compare', { method: 'POST', body: fd });
       setQuota(res.quota);
@@ -537,7 +568,7 @@
     }
   }
 
-  function renderCompare({ comparison: c, thumbs, provider }) {
+  function renderCompare({ comparison: c, thumbs, provider, reused }) {
     const arrow = { Improving: '↗', Worsening: '↘', Stable: '→', 'Not Comparable': '?' }[c.trend] || '?';
     const col = (title, s, img) => `
       <div class="card cmp-col"><h3 class="sec">${title}</h3>
@@ -546,7 +577,7 @@
         <div class="small muted" style="margin:8px 0 4px">Estimated leaf area affected: <b class="mono">${s.infected_area_pct}%</b> · ${esc(s.severity === 'None' ? 'No infection' : s.severity)}</div>
         <div class="bar-pct"><i style="width:${s.infected_area_pct}%"></i></div>
         ${list(s.observations)}</div>`;
-    $('#compareResult').innerHTML = `
+    $('#compareResult').innerHTML = `${reused ? reusedNote('pair of photos') : ''}
       <div class="trend ${clsKey(c.trend)} fade"><span class="arrow">${arrow}</span>
         <div><h2>${esc(c.trend)}</h2><div>${esc(c.change_summary)}</div></div></div>
       <div class="cmp-cols fade">${col('Day 1 Baseline', c.baseline, thumbs.baseline)}${col('Follow-Up Scan', c.followup, thumbs.followup)}</div>
@@ -735,7 +766,7 @@
     $$('.mode').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 
     // diagnose
-    $('#btnAnalyze').addEventListener('click', runAnalyze);
+    $('#btnAnalyze').addEventListener('click', () => runAnalyze());
     $('#sampleBar').addEventListener('click', async (e) => {
       const name = e.target.closest('[data-sample]')?.dataset.sample;
       if (!name) return;
@@ -755,10 +786,17 @@
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (act === 'report') openReport(state.active);
       else if (act === 'again') { single.clear(); emptyState(); resetPipeline(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+      else if (act === 'fresh') {
+        if (single.file) runAnalyze(true);
+        else toast('Add the photo again, then press Run again with AI.', 'error');
+      }
     });
 
     // compare
-    $('#btnCompare').addEventListener('click', runCompare);
+    $('#btnCompare').addEventListener('click', () => runCompare());
+    $('#compareResult').addEventListener('click', (e) => {
+      if (e.target.closest('[data-act="fresh"]')) runCompare(true);
+    });
     $$('[data-pair]').forEach((b) => b.addEventListener('click', async () => {
       const pair = b.dataset.pair === 'improving' ? ['early-blight', 'healthy-leaf'] : ['healthy-leaf', 'powdery-mildew'];
       try { base.setFile(await fileFromSample(pair[0])); follow.setFile(await fileFromSample(pair[1])); }

@@ -1,7 +1,10 @@
 """FastAPI application: REST API + static frontend for the plant-pathology console."""
 import asyncio
+import contextvars
 import json
 import logging
+import queue
+import threading
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -164,8 +167,13 @@ def delete_key(request: Request):
 
 # --------------------------------------------------------------------------- analyze (LangGraph)
 @app.post("/api/analyze")
-def analyze(request: Request, file: UploadFile = File(...), crop: str = Form(""), city: str = Form("")):
-    """Run the 5-node pipeline and stream progress as newline-delimited JSON events."""
+def analyze(request: Request, file: UploadFile = File(...), crop: str = Form(""), city: str = Form(""),
+            fresh: bool = Form(False)):
+    """Run the 5-node pipeline and stream progress as newline-delimited JSON events.
+
+    Events: start, node (one per finished node), waiting (Groq's per-minute limit: seconds until we retry),
+    then result or error.
+    """
     who = owner(request)
     crop, city = crop.strip()[:60], city.strip()[:80]
     image_b64, thumb = _prepare(file)      # validate first so bad uploads never burn a run
@@ -173,14 +181,35 @@ def analyze(request: Request, file: UploadFile = File(...), crop: str = Form("")
     _require_provider()
     t0 = time.perf_counter()
 
-    init = {"image_b64": image_b64, "thumb": thumb, "client_ip": who, "crop_hint": crop, "city": city, "trace": []}
+    init = {"image_b64": image_b64, "thumb": thumb, "client_ip": who, "crop_hint": crop, "city": city,
+            "fresh": fresh, "trace": []}
+
+    def run_pipeline(events: "queue.Queue") -> None:
+        """Worker thread: runs the graph and pushes its updates (and wait notices) onto `events`."""
+        llm.WAIT_HOOK.set(lambda secs: events.put(("waiting", secs)))
+        try:
+            for chunk in graph.PIPELINE.stream(init, stream_mode="updates"):
+                events.put(("chunk", chunk))
+            events.put(("end", None))
+        except Exception as exc:  # noqa: BLE001 - handed to the streaming side below
+            events.put(("fail", exc))
 
     def event_stream():
         state = dict(init)
         yield _ndjson({"event": "start", "quota": demo.quota(request), "payload_kb": round(len(image_b64) * 0.75 / 1024, 1)})
+        events: "queue.Queue" = queue.Queue()
+        threading.Thread(target=contextvars.copy_context().run, args=(run_pipeline, events), daemon=True).start()
         try:
-            for chunk in graph.PIPELINE.stream(init, stream_mode="updates"):
-                for node, update in chunk.items():
+            while True:
+                kind, item = events.get()
+                if kind == "waiting":
+                    yield _ndjson({"event": "waiting", "seconds": round(item)})
+                    continue
+                if kind == "fail":
+                    raise item
+                if kind == "end":
+                    break
+                for node, update in item.items():
                     if not update:
                         continue
                     for k, v in update.items():
@@ -211,7 +240,7 @@ def analyze(request: Request, file: UploadFile = File(...), crop: str = Form("")
 # --------------------------------------------------------------------------- compare (v1.1)
 @app.post("/api/compare")
 def compare(request: Request, baseline: UploadFile = File(...), followup: UploadFile = File(...),
-            crop: str = Form("")):
+            crop: str = Form(""), fresh: bool = Form(False)):
     b64_a, thumb_a = _prepare(baseline)
     b64_b, thumb_b = _prepare(followup)
     ticket = demo.require_run(request)
@@ -219,7 +248,8 @@ def compare(request: Request, baseline: UploadFile = File(...), followup: Upload
     crop = crop.strip()[:60]
     text = "Compare IMAGE 1 (Day 1 Baseline) with IMAGE 2 (Follow-Up Scan)." + (f" Crop: {crop}." if crop else "")
     try:
-        comp, provider = llm.invoke_json(prompts.COMPARE, text, schemas.Comparison, images=[b64_a, b64_b])
+        comp, provider, reused = llm.invoke_json_cached(prompts.COMPARE, text, schemas.Comparison,
+                                                        images=[b64_a, b64_b], fresh=fresh)
     except llm.LLMError as exc:
         raise ApiError(exc.code, str(exc))
     demo.record_run(ticket)
@@ -228,8 +258,8 @@ def compare(request: Request, baseline: UploadFile = File(...), followup: Upload
     if not (data["baseline"]["is_valid_plant_leaf"] and data["followup"]["is_valid_plant_leaf"]):
         data["trend"] = "Not Comparable"
         data["change_summary"] = data["change_summary"] or "At least one image does not show a plant leaf."
-    return {"comparison": data, "provider": provider, "thumbs": {"baseline": thumb_a, "followup": thumb_b},
-            "quota": quota}
+    return {"comparison": data, "provider": provider, "reused": reused,
+            "thumbs": {"baseline": thumb_a, "followup": thumb_b}, "quota": quota}
 
 
 # --------------------------------------------------------------------------- history

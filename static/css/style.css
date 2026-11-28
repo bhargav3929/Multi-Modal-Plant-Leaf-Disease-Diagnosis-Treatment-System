@@ -298,3 +298,10 @@ h3.sec { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; colo
 .debug th, .debug td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .debug th { color: var(--muted); font-weight: 500; }
 .debug pre { margin: 0; padding: 10px; background: #0F1F16; color: #B7F7D2; border-radius: 8px; max-height: 190px; overflow: auto; white-space: pre-wrap; }
+
+/* "Saved result" note: the same photo was analysed before, so the earlier AI answer is shown instantly */
+.reused-note { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  margin-bottom: 16px; padding: 12px 16px; border: 1px solid var(--line); border-left: 3px solid var(--emerald);
+  border-radius: 8px; background: var(--card); }
+.reused-note p { margin: 0; font-size: 14px; color: var(--muted); max-width: 560px; }
+.reused-note b { color: var(--forest); }
