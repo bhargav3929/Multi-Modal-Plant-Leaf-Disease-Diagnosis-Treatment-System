@@ -30,7 +30,7 @@ def _flag(name: str, default: bool = False) -> bool:
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Multi-Modal Plant Leaf Disease Diagnosis & Treatment System")
 PROJECT_SLUG = os.getenv("PROJECT_SLUG", "plant-leaf")
 PROJECT_NUMBER = _int("PROJECT_NUMBER", 1)
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 # --- Server -----------------------------------------------------------------
 HOST = os.getenv("HOST", "127.0.0.1")

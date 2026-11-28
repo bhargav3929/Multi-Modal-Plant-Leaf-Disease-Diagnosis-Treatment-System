@@ -81,9 +81,9 @@ main { max-width: 1280px; margin: 0 auto; padding: 22px 24px 28px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; font-weight: 600; }
 .field em { font-style: normal; font-weight: 400; color: var(--muted); }
-input[type=text], input[type=password], input[type=search] { width: 100%; padding: 9px 11px; border: 1px solid var(--line);
+input[type=text], input[type=password], input[type=search], .field select { width: 100%; padding: 9px 11px; border: 1px solid var(--line);
   border-radius: 9px; font: inherit; background: #FDFEFD; color: var(--ink); }
-input:focus { border-color: var(--emerald); outline: 3px solid rgba(5,150,105,.14); }
+input:focus, .field select:focus { border-color: var(--emerald); outline: 3px solid rgba(5,150,105,.14); }
 .samples { margin-top: 14px; }
 .label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 7px; }
@@ -305,3 +305,4 @@ h3.sec { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; colo
   border-radius: 8px; background: var(--card); }
 .reused-note p { margin: 0; font-size: 14px; color: var(--muted); max-width: 560px; }
 .reused-note b { color: var(--forest); }
+.gauge .num .word { font: 700 22px var(--font-body); letter-spacing: -.01em; }

@@ -32,6 +32,9 @@ MESSAGES = {
     "AI_BUSY": "The AI service is busy right now. Wait a minute and try again.",
     "AI_FAILED": "The AI couldn't process this input.",
 }
+# Groq's free tier also caps tokens per day (about 65 photo scans). Waiting a minute won't help then, so say so.
+DAILY_LIMIT_MESSAGE = ("Today's free AI limit for this Groq key is used up. Samples and saved results still work. "
+                       "Try again later (Groq resets it within 24 hours), or paste another key under API Keys.")
 
 
 RATE_LIMIT_WAIT_BUDGET_S = 60     # total time we are willing to wait for Groq's per-minute limit to reset
@@ -204,6 +207,8 @@ def invoke_json(system: str, user_text: str, schema: Type[T], images: Optional[L
                 if not transient:
                     break
                 busy = True
+                if status == 429 and re.search(r"per day|\(TPD\)|\(RPD\)", str(exc)):
+                    raise LLMError("AI_BUSY", DAILY_LIMIT_MESSAGE)
                 wait_s = _retry_after(str(exc)) if status == 429 else None
                 if wait_s is not None and waited + wait_s <= RATE_LIMIT_WAIT_BUDGET_S:
                     wait_s += 0.5      # per-minute limit: it will reset, so wait for it

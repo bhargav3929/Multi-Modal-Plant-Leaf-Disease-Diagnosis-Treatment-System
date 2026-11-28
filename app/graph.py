@@ -23,7 +23,7 @@ from typing import Annotated, Any, Callable, Dict, List
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
-from . import config, db, llm, prompts, schemas, weather
+from . import config, crops, db, llm, prompts, schemas, weather
 
 GATEKEEPER_NODE = "specimen_gatekeeper_node"
 VISION_NODE = "pathogen_vision_node"
@@ -85,8 +85,9 @@ def traced(node_id: str, label: str) -> Callable:
 def specimen_gatekeeper_node(state: PathologyState) -> Dict[str, Any]:
     """Node 1 - the single vision call. Halts for non-plants / illustrations; otherwise keeps the full answer."""
     hint = (state.get("crop_hint") or "").strip()
+    picked = crops.canonical(hint)
     text = "Check the image, then diagnose this leaf and write the treatment and prevention plans." + (
-        f" The grower says the crop is: {hint}." if hint else "")
+        crops.instruction(picked) if picked else (f" The grower says the crop is: {hint}." if hint else ""))
     out, provider, reused = llm.invoke_json_cached(prompts.BUNDLE, text, schemas.Bundle, images=[state["image_b64"]],
                                                    fresh=bool(state.get("fresh")), timeout=config.BUNDLE_TIMEOUT_SECONDS,
                                                    max_tokens=config.BUNDLE_MAX_TOKENS)
@@ -100,7 +101,9 @@ def specimen_gatekeeper_node(state: PathologyState) -> Dict[str, Any]:
                 "_meta": {"status": "halted", "detail": f"Rejected ({data['category'] or 'not a leaf'}) - pipeline stopped",
                           "provider": via}}
     d = out.diagnosis.model_dump()
-    if hint and d["crop"].lower() in ("", "unknown"):
+    if picked:
+        d["crop"] = picked              # the grower knows their crop better than the model
+    elif hint and d["crop"].lower() in ("", "unknown"):
         d["crop"] = hint
     return {"gatekeeper": data, "halted": False, "reused": reused, "provider": provider, "diagnosis": d,
             "bundle": {"treatment": out.treatment.model_dump(), "prevention": out.prevention.model_dump()},

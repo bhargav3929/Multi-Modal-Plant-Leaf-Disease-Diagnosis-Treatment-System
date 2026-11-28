@@ -27,6 +27,10 @@ model, adds live Open-Meteo weather risk, and returns organic and chemical treat
 - **How is weather risk computed?** Humidity (0-40) + temperature (0-25) + 48 h rain (0-35), times a weight per pathogen class.
 - **How is output kept reliable?** Replies are requested as JSON, parsed defensively, validated by Pydantic (`app/schemas.py`),
   confidence clamped to 0-100.
+- **Why pick the crop?** In our tests on labelled PlantVillage/PlantDoc photos the model often named the wrong plant
+  (an apple leaf as "rose"). With the crop given, it chooses among that crop's known diseases (`app/crops.py`).
+- **Why "Likely / Possible / Unsure" instead of a percentage?** The number is the model's own estimate, not a
+  measured probability, so the page shows it as a word (80+ Likely, 55-79 Possible, below 55 Unsure).
 - **Where is the API key kept?** In the local SQLite file or `.env`, never committed and never sent back in full to the browser.
 - **What if Groq is busy?** Retry with exponential backoff, switch to the fallback model, then show "The AI service is busy".
 - **Why no Docker or GPU?** One command must work on a student laptop: SQLite, pure-Python dependencies, hosted AI.

@@ -280,6 +280,13 @@
     return new File([blob], s.input_url.split('/').pop(), { type: blob.type || 'image/jpeg' });
   }
 
+  async function loadCrops() {
+    let list = [];
+    try { list = (await getJSON('api/crops')).crops || []; } catch (_) { /* dropdowns keep "Not sure" */ }
+    const opts = list.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+    ['#cropInput', '#cmpCrop'].forEach((sel) => { $(sel).insertAdjacentHTML('beforeend', opts); });
+  }
+
   async function loadSamples() {
     try { state.samples = (await getJSON('api/samples')).samples || []; } catch (_) { state.samples = []; }
     $('#sampleBar').innerHTML = state.samples.map((s) => `
@@ -438,13 +445,18 @@
     }
   }
 
+  /** The AI's own certainty is a self-estimate, not a measured probability, so show it as a word. */
+  function certainty(pct) {
+    return pct >= 80 ? 'Likely' : pct >= 55 ? 'Possible' : 'Unsure';
+  }
+
   function gaugeSvg(pct) {
     const C = 276.46;
-    const color = pct >= 75 ? 'var(--emerald)' : pct >= 50 ? '#D97706' : 'var(--crimson)';
+    const color = pct >= 80 ? 'var(--emerald)' : pct >= 55 ? '#D97706' : 'var(--crimson)';
     return `<div class="gauge"><svg width="150" height="150" viewBox="0 0 100 100" aria-hidden="true">
       <circle class="track" cx="50" cy="50" r="44"/>
       <circle class="bar" cx="50" cy="50" r="44" style="stroke:${color}" stroke-dasharray="${(pct / 100 * C).toFixed(1)} ${C}"/></svg>
-      <div class="num"><span>${Math.round(pct)}%</span><small>confidence</small></div></div>`;
+      <div class="num"><span class="word">${certainty(pct)}</span><small>AI certainty</small></div></div>`;
   }
 
   function severityMeter(sev) {
@@ -623,7 +635,7 @@
         <div class="h-item" data-id="${h.id}" tabindex="0">
           <img src="${esc(h.thumb)}" alt="">
           <div><h4>${esc(h.disease || 'Unknown')}</h4>
-            <div class="h-meta">${esc(h.crop || '—')}${h.city ? ' · ' + esc(h.city) : ''} · <span class="mono">${Math.round(h.confidence)}%</span></div>
+            <div class="h-meta">${esc(h.crop || '—')}${h.city ? ' · ' + esc(h.city) : ''} · <span>${certainty(h.confidence)}</span></div>
             <div class="h-meta">${esc(fmtDate(h.created_at))}</div>
             <div class="h-actions"><span class="badge ${clsKey(h.pathogen_class)}">${esc(h.pathogen_class)}</span>
               <button class="link-btn" style="color:var(--emerald)" data-hact="report" type="button">Report</button>
@@ -666,7 +678,7 @@
         ${row('Disease', `<b>${esc(d.disease)}</b>`)}
         ${row('Scientific / pathogen name', `<i>${esc(d.scientific_name || '—')}</i>`)}
         ${row('Pathogen class', esc(d.pathogen_class))}
-        ${row('Confidence', `${Math.round(d.confidence)}%`)}
+        ${row('AI certainty', `${certainty(d.confidence)} (the AI's own estimate)`)}
         ${row('Severity stage', esc(d.severity === 'None' ? 'No infection' : d.severity))}
         ${row('Summary', esc(d.summary))}
       </table>
@@ -835,6 +847,7 @@
     setInterval(renderQuota, 1000);
     refreshStatus(true);
     loadSamples();
+    loadCrops();
   }
 
   document.addEventListener('DOMContentLoaded', init);

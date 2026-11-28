@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, db, demo, errors, graph, imaging, llm, prompts, samples, schemas
+from . import config, crops, db, demo, errors, graph, imaging, llm, prompts, samples, schemas
 from .errors import ApiError
 
 log = logging.getLogger("agri")
@@ -120,6 +120,12 @@ def api_info(request: Request):
 @app.get("/api/quota")
 def api_quota(request: Request):
     return demo.quota(request)
+
+
+@app.get("/api/crops")
+def crop_list():
+    """Crops the grower can pick; each narrows the AI to that crop's known leaf diseases."""
+    return {"crops": [{"name": name, "diseases": diseases} for name, diseases in crops.CROP_DISEASES.items()]}
 
 
 @app.get("/api/samples")
@@ -246,7 +252,9 @@ def compare(request: Request, baseline: UploadFile = File(...), followup: Upload
     ticket = demo.require_run(request)
     _require_provider()
     crop = crop.strip()[:60]
-    text = "Compare IMAGE 1 (Day 1 Baseline) with IMAGE 2 (Follow-Up Scan)." + (f" Crop: {crop}." if crop else "")
+    picked = crops.canonical(crop)
+    text = "Compare IMAGE 1 (Day 1 Baseline) with IMAGE 2 (Follow-Up Scan)." + (
+        crops.instruction(picked) if picked else (f" Crop: {crop}." if crop else ""))
     try:
         comp, provider, reused = llm.invoke_json_cached(prompts.COMPARE, text, schemas.Comparison,
                                                         images=[b64_a, b64_b], fresh=fresh)
